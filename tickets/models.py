@@ -128,3 +128,59 @@ class Ticket(models.Model):
                     )
                 }
             )
+
+
+class TicketComment(models.Model):
+    ticket = models.ForeignKey(
+        Ticket,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="ticket_comments",
+    )
+    body = models.TextField()
+    is_internal = models.BooleanField(
+        default=False,
+        help_text=(
+            "Internal notes are visible only to support agents "
+            "and helpdesk administrators."
+        ),
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+    )
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        comment_type = "Internal note" if self.is_internal else "Comment"
+
+        return f"{comment_type} by {self.author} " f"on {self.ticket.ticket_number}"
+
+    def clean(self) -> None:
+        super().clean()
+
+        if not self.is_internal:
+            return
+
+        allowed_roles = {
+            self.author.Role.AGENT,
+            self.author.Role.ADMIN,
+        }
+
+        if self.author.role not in allowed_roles:
+            raise ValidationError(
+                {
+                    "is_internal": (
+                        "Only agents and helpdesk administrators "
+                        "can create internal notes."
+                    )
+                }
+            )
