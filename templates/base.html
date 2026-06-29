@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>
+        {% block title %}
+            Helpdesk Ticketing System
+        {% endblock %}
+    </title>
+</head>
+<body>
+    <header>
+        <nav aria-label="Main navigation">
+            <a href="{% url 'dashboard:home' %}">
+                Helpdesk
+            </a>
+
+            {% if user.is_authenticated %}
+                <span>
+                    Signed in as {{ user.username }}
+                </span>
+
+                {% if user.is_requester %}
+                    <span>Requester</span>
+                {% elif user.is_agent %}
+                    <span>Support Agent</span>
+                {% elif user.is_helpdesk_admin %}
+                    <span>Helpdesk Administrator</span>
+                {% endif %}
+
+                {% if user.is_staff %}
+                    <a href="{% url 'admin:index' %}">
+                        Django Admin
+                    </a>
+                {% endif %}
+
+                <form
+                    method="post"
+                    action="{% url 'accounts:logout' %}"
+                >
+                    {% csrf_token %}
+                    <button type="submit">
+                        Log out
+                    </button>
+                </form>
+            {% else %}
+                <a href="{% url 'accounts:login' %}">
+                    Log in
+                </a>
+
+                <a href="{% url 'accounts:register' %}">
+                    Register
+                </a>
+            {% endif %}
+        </nav>
+    </header>
+
+    <main>
+        {% if messages %}
+            <section aria-label="Notifications">
+                {% for message in messages %}
+                    <p>
+                        {{ message }}
+                    </p>
+                {% endfor %}
+            </section>
+        {% endif %}
+
+        {% block content %}
+        {% endblock %}
+    </main>
+</body>
+</html>

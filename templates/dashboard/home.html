@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Dashboard | Helpdesk
+{% endblock %}
+
+{% block content %}
+    <section>
+        <h1>Helpdesk Dashboard</h1>
+
+        <p>
+            Welcome, {{ user.get_full_name|default:user.username }}.
+        </p>
+
+        {% if user.is_requester %}
+            <h2>Requester workspace</h2>
+
+            <p>
+                From here, you will be able to create tickets,
+                review your requests, and communicate with
+                support staff.
+            </p>
+        {% elif user.is_agent %}
+            <h2>Support agent workspace</h2>
+
+            <p>
+                From here, you will be able to review the support
+                queue, accept assignments, and update tickets.
+            </p>
+        {% elif user.is_helpdesk_admin %}
+            <h2>Helpdesk administration workspace</h2>
+
+            <p>
+                From here, you will be able to oversee tickets,
+                assignments, and helpdesk operations.
+            </p>
+        {% endif %}
+    </section>
+{% endblock %}

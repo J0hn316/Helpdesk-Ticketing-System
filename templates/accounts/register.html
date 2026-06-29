@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Register | Helpdesk
+{% endblock %}
+
+{% block content %}
+    <section>
+        <h1>Create a requester account</h1>
+
+        <p>
+            Use this account to submit and track support tickets.
+        </p>
+
+        <form method="post">
+            {% csrf_token %}
+
+            {{ form.as_p }}
+
+            <button type="submit">
+                Create account
+            </button>
+        </form>
+
+        <p>
+            Already have an account?
+
+            <a href="{% url 'accounts:login' %}">
+                Log in
+            </a>
+        </p>
+    </section>
+{% endblock %}
