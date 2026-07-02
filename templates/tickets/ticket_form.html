@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Submit a Ticket | Helpdesk
+{% endblock %}
+
+{% block content %}
+    <section>
+        <h1>Submit a support ticket</h1>
+
+        <p>
+            Describe the issue in as much detail as possible.
+            A support agent will review and prioritize your request.
+        </p>
+
+        <form method="post">
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+                <div>
+                    {{ form.non_field_errors }}
+                </div>
+            {% endif %}
+
+            <div>
+                {{ form.title.label_tag }}
+                {{ form.title }}
+
+                {% if form.title.help_text %}
+                    <p>{{ form.title.help_text }}</p>
+                {% endif %}
+
+                {{ form.title.errors }}
+            </div>
+
+            <div>
+                {{ form.category.label_tag }}
+                {{ form.category }}
+
+                {% if form.category.help_text %}
+                    <p>{{ form.category.help_text }}</p>
+                {% endif %}
+
+                {{ form.category.errors }}
+            </div>
+
+            <div>
+                {{ form.description.label_tag }}
+                {{ form.description }}
+
+                {% if form.description.help_text %}
+                    <p>{{ form.description.help_text }}</p>
+                {% endif %}
+
+                {{ form.description.errors }}
+            </div>
+
+            <button type="submit">
+                Submit ticket
+            </button>
+
+            <a href="{% url 'dashboard:home' %}">
+                Cancel
+            </a>
+        </form>
+    </section>
+{% endblock %}

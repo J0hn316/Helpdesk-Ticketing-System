@@ -26,6 +26,10 @@
 
                 {% if user.is_requester %}
                     <span>Requester</span>
+                    
+                    <a href="{% url 'tickets:create' %}">
+                        Submit ticket
+                    </a>
                 {% elif user.is_agent %}
                     <span>Support Agent</span>
                 {% elif user.is_helpdesk_admin %}

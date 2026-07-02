@@ -11,6 +11,10 @@ urlpatterns = [
         include("accounts.urls"),
     ),
     path(
+        "tickets/",
+        include("tickets.urls"),
+    ),
+    path(
         "",
         include("dashboard.urls"),
     ),

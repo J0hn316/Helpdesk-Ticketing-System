@@ -16,9 +16,14 @@
             <h2>Requester workspace</h2>
 
             <p>
-                From here, you will be able to create tickets,
-                review your requests, and communicate with
-                support staff.
+                From here, you can create tickets, review your
+                requests, and communicate with support staff.
+            </p>
+
+            <p>
+                <a href="{% url 'tickets:create' %}">
+                Submit a new support ticket
+                </a>
             </p>
         {% elif user.is_agent %}
             <h2>Support agent workspace</h2>

@@ -1,8 +1,10 @@
+from django.urls import reverse
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db.models.deletion import ProtectedError
 
+from .forms import TicketCreateForm
 from .models import Category, Ticket, TicketComment
 
 User = get_user_model()
@@ -392,3 +394,381 @@ class TicketCommentModelTests(TestCase):
 
         with self.assertRaises(ProtectedError):
             self.requester.delete()
+
+
+class TicketCreateFormTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.active_category = Category.objects.create(
+            name="Hardware",
+            is_active=True,
+        )
+        cls.inactive_category = Category.objects.create(
+            name="Legacy Systems",
+            is_active=False,
+        )
+
+    def valid_form_data(self) -> dict[str, object]:
+        return {
+            "title": "Laptop will not start",
+            "description": (
+                "The laptop does not respond when I press " "the power button."
+            ),
+            "category": self.active_category.pk,
+        }
+
+    def test_form_contains_only_requester_editable_fields(
+        self,
+    ) -> None:
+        form = TicketCreateForm()
+
+        self.assertEqual(
+            list(form.fields),
+            [
+                "title",
+                "description",
+                "category",
+            ],
+        )
+
+    def test_form_displays_only_active_categories(self) -> None:
+        form = TicketCreateForm()
+
+        category_queryset = form.fields["category"].queryset
+
+        self.assertIn(
+            self.active_category,
+            category_queryset,
+        )
+        self.assertNotIn(
+            self.inactive_category,
+            category_queryset,
+        )
+
+    def test_valid_ticket_data_passes_validation(self) -> None:
+        form = TicketCreateForm(
+            data=self.valid_form_data(),
+        )
+
+        self.assertTrue(form.is_valid())
+
+    def test_inactive_category_is_rejected(self) -> None:
+        form_data = self.valid_form_data()
+        form_data["category"] = self.inactive_category.pk
+
+        form = TicketCreateForm(data=form_data)
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("category", form.errors)
+
+    def test_title_is_stripped(self) -> None:
+        form_data = self.valid_form_data()
+        form_data["title"] = "   VPN will not connect   "
+
+        form = TicketCreateForm(data=form_data)
+
+        self.assertTrue(form.is_valid())
+        self.assertEqual(
+            form.cleaned_data["title"],
+            "VPN will not connect",
+        )
+
+    def test_short_title_is_rejected(self) -> None:
+        form_data = self.valid_form_data()
+        form_data["title"] = "Help"
+
+        form = TicketCreateForm(data=form_data)
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("title", form.errors)
+
+    def test_short_description_is_rejected(self) -> None:
+        form_data = self.valid_form_data()
+        form_data["description"] = "Broken"
+
+        form = TicketCreateForm(data=form_data)
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("description", form.errors)
+
+
+class TicketCreateViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.active_category = Category.objects.create(
+            name="Network",
+            is_active=True,
+        )
+        cls.inactive_category = Category.objects.create(
+            name="Legacy VPN",
+            is_active=False,
+        )
+
+    def valid_ticket_data(self) -> dict[str, object]:
+        return {
+            "title": "Unable to connect to VPN",
+            "description": (
+                "The VPN reports an authentication error "
+                "after I enter my credentials."
+            ),
+            "category": self.active_category.pk,
+        }
+
+    def test_ticket_creation_requires_authentication(self) -> None:
+        response = self.client.get(
+            reverse("tickets:create"),
+        )
+
+        expected_url = (
+            f"{reverse('accounts:login')}" f"?next={reverse('tickets:create')}"
+        )
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_requester_can_view_ticket_creation_page(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("tickets:create"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(
+            response,
+            "tickets/ticket_form.html",
+        )
+        self.assertContains(
+            response,
+            "Submit a support ticket",
+        )
+
+    def test_agent_cannot_view_requester_creation_page(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:create"),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_helpdesk_admin_cannot_view_requester_creation_page(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            reverse("tickets:create"),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_requester_can_create_ticket(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            reverse("tickets:create"),
+            self.valid_ticket_data(),
+        )
+
+        ticket = Ticket.objects.get(
+            title="Unable to connect to VPN",
+        )
+
+        self.assertEqual(
+            ticket.requester,
+            self.requester,
+        )
+        self.assertEqual(
+            ticket.category,
+            self.active_category,
+        )
+        self.assertRedirects(
+            response,
+            reverse("dashboard:home"),
+        )
+
+    def test_created_ticket_uses_safe_defaults(self) -> None:
+        self.client.force_login(self.requester)
+
+        self.client.post(
+            reverse("tickets:create"),
+            self.valid_ticket_data(),
+        )
+
+        ticket = Ticket.objects.get(
+            title="Unable to connect to VPN",
+        )
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.OPEN,
+        )
+        self.assertEqual(
+            ticket.priority,
+            Ticket.Priority.MEDIUM,
+        )
+        self.assertIsNone(ticket.assigned_agent)
+
+    def test_forged_ticket_fields_are_ignored(self) -> None:
+        self.client.force_login(self.requester)
+
+        forged_data = self.valid_ticket_data()
+        forged_data.update(
+            {
+                "requester": self.agent.pk,
+                "assigned_agent": self.agent.pk,
+                "status": Ticket.Status.CLOSED,
+                "priority": Ticket.Priority.CRITICAL,
+                "ticket_number": "HD-FORGED01",
+            }
+        )
+
+        self.client.post(
+            reverse("tickets:create"),
+            forged_data,
+        )
+
+        ticket = Ticket.objects.get(
+            title="Unable to connect to VPN",
+        )
+
+        self.assertEqual(
+            ticket.requester,
+            self.requester,
+        )
+        self.assertIsNone(ticket.assigned_agent)
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.OPEN,
+        )
+        self.assertEqual(
+            ticket.priority,
+            Ticket.Priority.MEDIUM,
+        )
+        self.assertNotEqual(
+            ticket.ticket_number,
+            "HD-FORGED01",
+        )
+
+    def test_inactive_category_cannot_be_submitted(self) -> None:
+        self.client.force_login(self.requester)
+
+        ticket_data = self.valid_ticket_data()
+        ticket_data["category"] = self.inactive_category.pk
+
+        response = self.client.post(
+            reverse("tickets:create"),
+            ticket_data,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Ticket.objects.exists())
+        self.assertContains(
+            response,
+            "Select a valid choice",
+        )
+
+    def test_invalid_submission_does_not_create_ticket(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            reverse("tickets:create"),
+            {
+                "title": "Help",
+                "description": "Broken",
+                "category": self.active_category.pk,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Ticket.objects.exists())
+        self.assertContains(
+            response,
+            "Enter a title containing at least 5 characters.",
+        )
+
+    def test_success_message_contains_ticket_number(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            reverse("tickets:create"),
+            self.valid_ticket_data(),
+            follow=True,
+        )
+
+        ticket = Ticket.objects.get(
+            title="Unable to connect to VPN",
+        )
+
+        self.assertContains(
+            response,
+            (f"Ticket {ticket.ticket_number} was submitted " "successfully."),
+        )
+
+    def test_requester_navigation_contains_submit_link(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertContains(
+            response,
+            reverse("tickets:create"),
+        )
+
+    def test_agent_navigation_does_not_contain_submit_link(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertNotContains(
+            response,
+            reverse("tickets:create"),
+        )
+
+    def test_helpdesk_admin_navigation_does_not_contain_submit_link(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertNotContains(
+            response,
+            reverse("tickets:create"),
+        )
