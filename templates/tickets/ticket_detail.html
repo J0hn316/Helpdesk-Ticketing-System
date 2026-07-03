@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}
+    {{ ticket.ticket_number }} | Helpdesk
+{% endblock %}
+
+{% block content %}
+    <article>
+        <header>
+            <p>
+                <a href="{% url 'tickets:list' %}">
+                    Back to my tickets
+                </a>
+            </p>
+
+            <p>{{ ticket.ticket_number }}</p>
+
+            <h1>{{ ticket.title }}</h1>
+        </header>
+
+        <section aria-labelledby="ticket-details-heading">
+            <h2 id="ticket-details-heading">
+                Ticket details
+            </h2>
+
+            <dl>
+                <div>
+                    <dt>Status</dt>
+                    <dd>{{ ticket.get_status_display }}</dd>
+                </div>
+
+                <div>
+                    <dt>Priority</dt>
+                    <dd>{{ ticket.get_priority_display }}</dd>
+                </div>
+
+                <div>
+                    <dt>Category</dt>
+                    <dd>{{ ticket.category.name }}</dd>
+                </div>
+
+                <div>
+                    <dt>Assigned agent</dt>
+                    <dd>
+                        {% if ticket.assigned_agent %}
+                            {{ ticket.assigned_agent.get_full_name|default:ticket.assigned_agent.username }}
+                        {% else %}
+                            Unassigned
+                        {% endif %}
+                    </dd>
+                </div>
+
+                <div>
+                    <dt>Created</dt>
+                    <dd>
+                        {{ ticket.created_at|date:"M j, Y g:i A" }}
+                    </dd>
+                </div>
+
+                <div>
+                    <dt>Last updated</dt>
+                    <dd>
+                        {{ ticket.updated_at|date:"M j, Y g:i A" }}
+                    </dd>
+                </div>
+
+                {% if ticket.resolved_at %}
+                    <div>
+                        <dt>Resolved</dt>
+                        <dd>
+                            {{ ticket.resolved_at|date:"M j, Y g:i A" }}
+                        </dd>
+                    </div>
+                {% endif %}
+
+                {% if ticket.closed_at %}
+                    <div>
+                        <dt>Closed</dt>
+                        <dd>
+                            {{ ticket.closed_at|date:"M j, Y g:i A" }}
+                        </dd>
+                    </div>
+                {% endif %}
+            </dl>
+        </section>
+
+        <section aria-labelledby="description-heading">
+            <h2 id="description-heading">
+                Description
+            </h2>
+
+            <p>{{ ticket.description|linebreaksbr }}</p>
+        </section>
+
+        <section aria-labelledby="conversation-heading">
+            <h2 id="conversation-heading">
+                Conversation
+            </h2>
+
+            {% if ticket.public_comments %}
+                {% for comment in ticket.public_comments %}
+                    <article>
+                        <header>
+                            <strong>
+                                {{ comment.author.get_full_name|default:comment.author.username }}
+                            </strong>
+
+                            {% if comment.author.is_agent or comment.author.is_helpdesk_admin %}
+                                <span>Support</span>
+                            {% else %}
+                                <span>Requester</span>
+                            {% endif %}
+
+                            <time
+                                datetime="{{ comment.created_at|date:'c' }}"
+                            >
+                                {{ comment.created_at|date:"M j, Y g:i A" }}
+                            </time>
+                        </header>
+
+                        <p>{{ comment.body|linebreaksbr }}</p>
+
+                        {% if comment.updated_at != comment.created_at %}
+                            <small>Edited</small>
+                        {% endif %}
+                    </article>
+                {% endfor %}
+            {% else %}
+                <p>
+                    No public updates have been added to this ticket.
+                </p>
+            {% endif %}
+        </section>
+    </article>
+{% endblock %}

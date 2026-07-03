@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}
+    My Tickets | Helpdesk
+{% endblock %}
+
+{% block content %}
+    <section>
+        <header>
+            <h1>My tickets</h1>
+
+            <p>
+                Review the support requests you have submitted.
+            </p>
+
+            <a href="{% url 'tickets:create' %}">
+                Submit a new ticket
+            </a>
+        </header>
+
+        {% if tickets %}
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Ticket</th>
+                        <th scope="col">Title</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Priority</th>
+                        <th scope="col">Assigned agent</th>
+                        <th scope="col">Created</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for ticket in tickets %}
+                        <tr>
+                            <td>
+                                <a
+                                    href="{% url 'tickets:detail' ticket.pk %}"
+                                >
+                                    {{ ticket.ticket_number }}
+                                </a>
+                            </td>
+
+                            <td>{{ ticket.title }}</td>
+
+                            <td>{{ ticket.category.name }}</td>
+
+                            <td>{{ ticket.get_status_display }}</td>
+
+                            <td>{{ ticket.get_priority_display }}</td>
+
+                            <td>
+                                {% if ticket.assigned_agent %}
+                                    {{ ticket.assigned_agent.get_full_name|default:ticket.assigned_agent.username }}
+                                {% else %}
+                                    Unassigned
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {{ ticket.created_at|date:"M j, Y g:i A" }}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div>
+                <h2>No tickets yet</h2>
+
+                <p>
+                    You have not submitted any support tickets.
+                </p>
+
+                <a href="{% url 'tickets:create' %}">
+                    Submit your first ticket
+                </a>
+            </div>
+        {% endif %}
+    </section>
+{% endblock %}

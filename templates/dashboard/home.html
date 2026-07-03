@@ -21,8 +21,14 @@
             </p>
 
             <p>
+                <a href="{% url 'tickets:list' %}">
+            View my tickets
+                </a>
+            </p>
+
+            <p>
                 <a href="{% url 'tickets:create' %}">
-                Submit a new support ticket
+            Submit a new support ticket
                 </a>
             </p>
         {% elif user.is_agent %}

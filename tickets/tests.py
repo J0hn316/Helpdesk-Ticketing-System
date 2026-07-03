@@ -606,7 +606,10 @@ class TicketCreateViewTests(TestCase):
         )
         self.assertRedirects(
             response,
-            reverse("dashboard:home"),
+            reverse(
+                "tickets:detail",
+                kwargs={"ticket_id": ticket.pk},
+            ),
         )
 
     def test_created_ticket_uses_safe_defaults(self) -> None:
@@ -771,4 +774,501 @@ class TicketCreateViewTests(TestCase):
         self.assertNotContains(
             response,
             reverse("tickets:create"),
+        )
+
+
+class RequesterTicketListViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.other_requester = User.objects.create_user(
+            username="otherrequester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Hardware",
+        )
+
+        cls.requester_ticket = Ticket.objects.create(
+            title="Requester laptop issue",
+            description=("The requester laptop does not start correctly."),
+            requester=cls.requester,
+            category=cls.category,
+        )
+        cls.other_ticket = Ticket.objects.create(
+            title="Another user's ticket",
+            description=("This ticket belongs to another requester."),
+            requester=cls.other_requester,
+            category=cls.category,
+        )
+
+    def test_ticket_list_requires_authentication(self) -> None:
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        expected_url = f"{reverse('accounts:login')}" f"?next={reverse('tickets:list')}"
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_requester_can_view_ticket_list(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(
+            response,
+            "tickets/ticket_list.html",
+        )
+        self.assertContains(response, "My tickets")
+
+    def test_requester_sees_only_their_own_tickets(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        self.assertContains(
+            response,
+            self.requester_ticket.ticket_number,
+        )
+        self.assertContains(
+            response,
+            self.requester_ticket.title,
+        )
+        self.assertNotContains(
+            response,
+            self.other_ticket.ticket_number,
+        )
+        self.assertNotContains(
+            response,
+            self.other_ticket.title,
+        )
+
+    def test_ticket_list_context_contains_only_owned_tickets(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        tickets = list(response.context["tickets"])
+
+        self.assertEqual(
+            tickets,
+            [self.requester_ticket],
+        )
+
+    def test_agent_cannot_view_requester_ticket_list(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_helpdesk_admin_cannot_view_requester_ticket_list(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_empty_ticket_list_displays_empty_state(self) -> None:
+        requester_without_tickets = User.objects.create_user(
+            username="emptyrequester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        self.client.force_login(requester_without_tickets)
+
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        self.assertContains(response, "No tickets yet")
+        self.assertContains(
+            response,
+            "Submit your first ticket",
+        )
+
+    def test_ticket_list_displays_status_and_priority(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        self.assertContains(
+            response,
+            self.requester_ticket.get_status_display(),
+        )
+        self.assertContains(
+            response,
+            self.requester_ticket.get_priority_display(),
+        )
+
+    def test_ticket_list_contains_detail_link(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("tickets:list"),
+        )
+
+        detail_url = reverse(
+            "tickets:detail",
+            kwargs={
+                "ticket_id": self.requester_ticket.pk,
+            },
+        )
+
+        self.assertContains(response, detail_url)
+
+    def test_requester_navigation_contains_ticket_list_link(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertContains(
+            response,
+            reverse("tickets:list"),
+        )
+
+    def test_agent_navigation_does_not_contain_ticket_list_link(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertNotContains(
+            response,
+            reverse("tickets:list"),
+        )
+
+    def test_helpdesk_admin_navigation_does_not_contain_ticket_list_link(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertNotContains(
+            response,
+            reverse("tickets:list"),
+        )
+
+
+class RequesterTicketDetailViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.other_requester = User.objects.create_user(
+            username="otherrequester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Network",
+        )
+        cls.ticket = Ticket.objects.create(
+            title="VPN authentication error",
+            description=(
+                "The VPN reports an authentication error "
+                "when the requester attempts to connect."
+            ),
+            requester=cls.requester,
+            assigned_agent=cls.agent,
+            category=cls.category,
+            priority=Ticket.Priority.HIGH,
+        )
+        cls.other_ticket = Ticket.objects.create(
+            title="Other requester issue",
+            description=("This ticket belongs to another requester."),
+            requester=cls.other_requester,
+            category=cls.category,
+        )
+        cls.requester_comment = TicketComment.objects.create(
+            ticket=cls.ticket,
+            author=cls.requester,
+            body="The issue still happens after restarting.",
+        )
+        cls.agent_public_comment = TicketComment.objects.create(
+            ticket=cls.ticket,
+            author=cls.agent,
+            body="Please reset your network password and retry.",
+        )
+        cls.internal_note = TicketComment.objects.create(
+            ticket=cls.ticket,
+            author=cls.agent,
+            body=(
+                "Account appears locked in the identity system. "
+                "Do not expose this internal note."
+            ),
+            is_internal=True,
+        )
+
+    def detail_url(self, ticket: Ticket | None = None) -> str:
+        selected_ticket = ticket or self.ticket
+
+        return reverse(
+            "tickets:detail",
+            kwargs={
+                "ticket_id": selected_ticket.pk,
+            },
+        )
+
+    def test_ticket_detail_requires_authentication(self) -> None:
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        expected_url = f"{reverse('accounts:login')}" f"?next={self.detail_url()}"
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_requester_can_view_owned_ticket(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(
+            response,
+            "tickets/ticket_detail.html",
+        )
+        self.assertContains(
+            response,
+            self.ticket.ticket_number,
+        )
+        self.assertContains(
+            response,
+            self.ticket.title,
+        )
+        self.assertContains(
+            response,
+            self.ticket.description,
+        )
+
+    def test_requester_cannot_view_another_requesters_ticket(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(self.other_ticket),
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_nonexistent_ticket_returns_404(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse(
+                "tickets:detail",
+                kwargs={"ticket_id": 999999},
+            ),
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_agent_cannot_view_requester_detail_page(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_helpdesk_admin_cannot_view_requester_detail_page(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_ticket_detail_displays_ticket_metadata(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertContains(
+            response,
+            self.ticket.get_status_display(),
+        )
+        self.assertContains(
+            response,
+            self.ticket.get_priority_display(),
+        )
+        self.assertContains(
+            response,
+            self.category.name,
+        )
+        self.assertContains(
+            response,
+            self.agent.username,
+        )
+
+    def test_ticket_detail_displays_public_comments(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertContains(
+            response,
+            self.requester_comment.body,
+        )
+        self.assertContains(
+            response,
+            self.agent_public_comment.body,
+        )
+
+    def test_ticket_detail_hides_internal_notes(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertNotContains(
+            response,
+            self.internal_note.body,
+        )
+
+    def test_public_comments_context_excludes_internal_notes(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        ticket = response.context["ticket"]
+
+        self.assertEqual(
+            ticket.public_comments,
+            [
+                self.requester_comment,
+                self.agent_public_comment,
+            ],
+        )
+        self.assertNotIn(
+            self.internal_note,
+            ticket.public_comments,
+        )
+
+    def test_public_comments_are_oldest_first(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        ticket = response.context["ticket"]
+
+        self.assertEqual(
+            ticket.public_comments,
+            [
+                self.requester_comment,
+                self.agent_public_comment,
+            ],
+        )
+
+    def test_ticket_without_comments_displays_empty_message(
+        self,
+    ) -> None:
+        ticket_without_comments = Ticket.objects.create(
+            title="No conversation ticket",
+            description=("This ticket does not have any comments yet."),
+            requester=self.requester,
+            category=self.category,
+        )
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(ticket_without_comments),
+        )
+
+        self.assertContains(
+            response,
+            "No public updates have been added to this ticket.",
         )

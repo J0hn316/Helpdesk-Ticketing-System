@@ -27,6 +27,9 @@
                 {% if user.is_requester %}
                     <span>Requester</span>
                     
+                    <a href="{% url 'tickets:list' %}">
+                        My tickets
+                    </a>
                     <a href="{% url 'tickets:create' %}">
                         Submit ticket
                     </a>
