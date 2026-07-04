@@ -97,8 +97,8 @@
                 Conversation
             </h2>
 
-            {% if ticket.public_comments %}
-                {% for comment in ticket.public_comments %}
+            {% if public_comments %}
+                {% for comment in public_comments %}
                     <article>
                         <header>
                             <strong>
@@ -130,6 +130,37 @@
                     No public updates have been added to this ticket.
                 </p>
             {% endif %}
+        </section>
+        <section aria-labelledby="reply-heading">
+            <h2 id="reply-heading">
+                Add a reply
+            </h2>
+
+        {% if can_comment %}
+            <form method="post" action="{% url 'tickets:comment-create' ticket.pk %}">
+                {% csrf_token %}
+
+                {% if comment_form.non_field_errors %}
+                    <div>
+                        {{ comment_form.non_field_errors }}
+                    </div>
+                {% endif %}
+
+                <div>
+                    {{ comment_form.body.label_tag }}
+                    {{ comment_form.body }}
+                    {{ comment_form.body.errors }}
+                </div>
+
+                <button type="submit">
+                    Add reply
+                </button>
+            </form>
+        {% else %}
+            <p>
+                This ticket is closed and cannot receive new replies.
+            </p>
+        {% endif %}
         </section>
     </article>
 {% endblock %}

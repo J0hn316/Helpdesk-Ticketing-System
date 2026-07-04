@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db.models.deletion import ProtectedError
 
-from .forms import TicketCreateForm
+from .forms import TicketCreateForm, RequesterCommentForm
 from .models import Category, Ticket, TicketComment
 
 User = get_user_model()
@@ -1222,10 +1222,10 @@ class RequesterTicketDetailViewTests(TestCase):
             self.detail_url(),
         )
 
-        ticket = response.context["ticket"]
+        public_comments = list(response.context["public_comments"])
 
         self.assertEqual(
-            ticket.public_comments,
+            public_comments,
             [
                 self.requester_comment,
                 self.agent_public_comment,
@@ -1233,7 +1233,7 @@ class RequesterTicketDetailViewTests(TestCase):
         )
         self.assertNotIn(
             self.internal_note,
-            ticket.public_comments,
+            public_comments,
         )
 
     def test_public_comments_are_oldest_first(self) -> None:
@@ -1243,10 +1243,10 @@ class RequesterTicketDetailViewTests(TestCase):
             self.detail_url(),
         )
 
-        ticket = response.context["ticket"]
+        public_comments = list(response.context["public_comments"])
 
         self.assertEqual(
-            ticket.public_comments,
+            public_comments,
             [
                 self.requester_comment,
                 self.agent_public_comment,
@@ -1272,3 +1272,436 @@ class RequesterTicketDetailViewTests(TestCase):
             response,
             "No public updates have been added to this ticket.",
         )
+
+    def test_open_ticket_displays_comment_form(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertContains(response, "Add a reply")
+        self.assertContains(
+            response,
+            reverse(
+                "tickets:comment-create",
+                kwargs={"ticket_id": self.ticket.pk},
+            ),
+        )
+        self.assertIsInstance(
+            response.context["comment_form"],
+            RequesterCommentForm,
+        )
+
+
+def test_closed_ticket_hides_comment_form(self) -> None:
+    closed_ticket = Ticket.objects.create(
+        title="Closed network issue",
+        description=("This network issue has completed the workflow."),
+        requester=self.requester,
+        category=self.category,
+        status=Ticket.Status.CLOSED,
+    )
+    self.client.force_login(self.requester)
+
+    response = self.client.get(
+        self.detail_url(closed_ticket),
+    )
+
+    self.assertContains(
+        response,
+        "This ticket is closed and cannot receive new replies.",
+    )
+    self.assertNotContains(
+        response,
+        reverse(
+            "tickets:comment-create",
+            kwargs={"ticket_id": closed_ticket.pk},
+        ),
+    )
+
+
+class RequesterCommentCreateViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.other_requester = User.objects.create_user(
+            username="otherrequester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Software",
+        )
+        cls.ticket = Ticket.objects.create(
+            title="Application login failure",
+            description=(
+                "The application rejects the requester's " "valid login credentials."
+            ),
+            requester=cls.requester,
+            assigned_agent=cls.agent,
+            category=cls.category,
+        )
+        cls.other_ticket = Ticket.objects.create(
+            title="Other requester's application issue",
+            description=("This ticket belongs to another requester."),
+            requester=cls.other_requester,
+            category=cls.category,
+        )
+        cls.closed_ticket = Ticket.objects.create(
+            title="Closed software issue",
+            description=("This ticket has already completed its workflow."),
+            requester=cls.requester,
+            category=cls.category,
+            status=Ticket.Status.CLOSED,
+        )
+
+    def comment_url(self, ticket: Ticket | None = None) -> str:
+        selected_ticket = ticket or self.ticket
+
+        return reverse(
+            "tickets:comment-create",
+            kwargs={
+                "ticket_id": selected_ticket.pk,
+            },
+        )
+
+    def valid_comment_data(self) -> dict[str, str]:
+        return {
+            "body": (
+                "The problem still happens after reinstalling " "the application."
+            ),
+        }
+
+    def test_comment_creation_requires_authentication(self) -> None:
+        response = self.client.post(
+            self.comment_url(),
+            self.valid_comment_data(),
+        )
+
+        expected_url = f"{reverse('accounts:login')}" f"?next={self.comment_url()}"
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_comment_endpoint_does_not_accept_get(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.comment_url(),
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_requester_can_add_comment_to_owned_ticket(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.comment_url(),
+            self.valid_comment_data(),
+        )
+
+        comment = TicketComment.objects.get(
+            body=("The problem still happens after reinstalling " "the application."),
+        )
+
+        self.assertEqual(comment.ticket, self.ticket)
+        self.assertEqual(comment.author, self.requester)
+        self.assertFalse(comment.is_internal)
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:detail",
+                kwargs={"ticket_id": self.ticket.pk},
+            ),
+        )
+
+    def test_success_message_is_displayed(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.comment_url(),
+            self.valid_comment_data(),
+            follow=True,
+        )
+
+        self.assertContains(
+            response,
+            "Your reply was added successfully.",
+        )
+
+    def test_requester_cannot_comment_on_another_users_ticket(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.comment_url(self.other_ticket),
+            self.valid_comment_data(),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(
+            TicketComment.objects.filter(
+                ticket=self.other_ticket,
+                author=self.requester,
+            ).exists()
+        )
+
+    def test_nonexistent_ticket_returns_404(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            reverse(
+                "tickets:comment-create",
+                kwargs={"ticket_id": 999999},
+            ),
+            self.valid_comment_data(),
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_agent_cannot_use_requester_comment_endpoint(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.comment_url(),
+            self.valid_comment_data(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(TicketComment.objects.exists())
+
+    def test_helpdesk_admin_cannot_use_requester_comment_endpoint(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.comment_url(),
+            self.valid_comment_data(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(TicketComment.objects.exists())
+
+    def test_forged_author_is_ignored(self) -> None:
+        self.client.force_login(self.requester)
+
+        forged_data = self.valid_comment_data()
+        forged_data["author"] = str(self.agent.pk)
+
+        self.client.post(
+            self.comment_url(),
+            forged_data,
+        )
+
+        comment = TicketComment.objects.get()
+
+        self.assertEqual(comment.author, self.requester)
+
+    def test_forged_ticket_is_ignored(self) -> None:
+        self.client.force_login(self.requester)
+
+        forged_data = self.valid_comment_data()
+        forged_data["ticket"] = str(self.other_ticket.pk)
+
+        self.client.post(
+            self.comment_url(),
+            forged_data,
+        )
+
+        comment = TicketComment.objects.get()
+
+        self.assertEqual(comment.ticket, self.ticket)
+        self.assertNotEqual(
+            comment.ticket,
+            self.other_ticket,
+        )
+
+    def test_forged_internal_value_is_ignored(self) -> None:
+        self.client.force_login(self.requester)
+
+        forged_data = self.valid_comment_data()
+        forged_data["is_internal"] = "true"
+
+        self.client.post(
+            self.comment_url(),
+            forged_data,
+        )
+
+        comment = TicketComment.objects.get()
+
+        self.assertFalse(comment.is_internal)
+
+    def test_invalid_comment_is_not_created(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.comment_url(),
+            {"body": "x"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(TicketComment.objects.exists())
+        self.assertContains(
+            response,
+            "Enter a comment containing at least 2 characters.",
+            status_code=400,
+        )
+
+    def test_invalid_comment_preserves_submitted_body(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.comment_url(),
+            {"body": "x"},
+        )
+
+        self.assertEqual(
+            response.context["comment_form"]["body"].value(),
+            "x",
+        )
+
+    def test_invalid_comment_page_still_hides_internal_notes(
+        self,
+    ) -> None:
+        TicketComment.objects.create(
+            ticket=self.ticket,
+            author=self.agent,
+            body="Private technician troubleshooting details.",
+            is_internal=True,
+        )
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.comment_url(),
+            {"body": "x"},
+        )
+
+        self.assertNotContains(
+            response,
+            "Private technician troubleshooting details.",
+            status_code=400,
+        )
+
+    def test_closed_ticket_rejects_new_comment(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.comment_url(self.closed_ticket),
+            self.valid_comment_data(),
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:detail",
+                kwargs={"ticket_id": self.closed_ticket.pk},
+            ),
+        )
+        self.assertFalse(
+            TicketComment.objects.filter(
+                ticket=self.closed_ticket,
+            ).exists()
+        )
+
+    def test_closed_ticket_displays_error_message(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.comment_url(self.closed_ticket),
+            self.valid_comment_data(),
+            follow=True,
+        )
+
+        self.assertContains(
+            response,
+            "Closed tickets cannot receive new requester comments.",
+        )
+
+
+class RequesterCommentFormTests(TestCase):
+    def test_form_contains_only_body_field(self) -> None:
+        form = RequesterCommentForm()
+
+        self.assertEqual(
+            list(form.fields),
+            ["body"],
+        )
+
+    def test_valid_body_passes_validation(self) -> None:
+        form = RequesterCommentForm(
+            data={
+                "body": ("The error still appears after restarting."),
+            }
+        )
+
+        self.assertTrue(form.is_valid())
+
+    def test_body_is_stripped(self) -> None:
+        form = RequesterCommentForm(
+            data={
+                "body": "   The issue still happens.   ",
+            }
+        )
+
+        self.assertTrue(form.is_valid())
+        self.assertEqual(
+            form.cleaned_data["body"],
+            "The issue still happens.",
+        )
+
+    def test_empty_body_is_rejected(self) -> None:
+        form = RequesterCommentForm(
+            data={"body": ""},
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("body", form.errors)
+
+    def test_whitespace_only_body_is_rejected(self) -> None:
+        form = RequesterCommentForm(
+            data={"body": "      "},
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("body", form.errors)
+
+    def test_one_character_body_is_rejected(self) -> None:
+        form = RequesterCommentForm(
+            data={"body": "x"},
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("body", form.errors)
+
+    def test_forged_fields_are_not_form_fields(self) -> None:
+        form = RequesterCommentForm()
+
+        self.assertNotIn("ticket", form.fields)
+        self.assertNotIn("author", form.fields)
+        self.assertNotIn("is_internal", form.fields)

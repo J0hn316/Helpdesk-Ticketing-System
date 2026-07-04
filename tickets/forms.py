@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Category, Ticket
+from .models import Category, Ticket, TicketComment
 
 
 class TicketCreateForm(forms.ModelForm):
@@ -47,3 +47,33 @@ class TicketCreateForm(forms.ModelForm):
             )
 
         return description
+
+
+class RequesterCommentForm(forms.ModelForm):
+    class Meta:
+        model = TicketComment
+        fields = ("body",)
+        labels = {
+            "body": "Add a reply",
+        }
+        widgets = {
+            "body": forms.Textarea(
+                attrs={
+                    "rows": 5,
+                    "placeholder": (
+                        "Add information, answer a support question, "
+                        "or provide a troubleshooting update."
+                    ),
+                }
+            ),
+        }
+
+    def clean_body(self) -> str:
+        body = self.cleaned_data["body"].strip()
+
+        if len(body) < 2:
+            raise forms.ValidationError(
+                "Enter a comment containing at least 2 characters."
+            )
+
+        return body

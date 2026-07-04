@@ -1,14 +1,15 @@
 from django.contrib import messages
-from django.db.models import Prefetch
-from django.shortcuts import redirect, render, get_object_or_404
+from django.views.decorators.http import require_POST
 from django.contrib.auth.decorators import login_required
+from django.shortcuts import redirect, render, get_object_or_404
 from django.http import (
     HttpRequest,
     HttpResponse,
     HttpResponseForbidden,
 )
-from .forms import TicketCreateForm
+
 from .models import Ticket, TicketComment
+from .forms import TicketCreateForm, RequesterCommentForm
 
 
 @login_required
@@ -42,38 +43,105 @@ def ticket_detail(
     if not request.user.is_requester:
         return HttpResponseForbidden("Only requesters can view this ticket page.")
 
-    public_comments = (
-        TicketComment.objects.filter(is_internal=False)
-        .select_related("author")
-        .order_by("created_at")
-    )
-
-    ticket_queryset = Ticket.objects.select_related(
-        "requester",
-        "assigned_agent",
-        "category",
-    ).prefetch_related(
-        Prefetch(
-            "comments",
-            queryset=public_comments,
-            to_attr="public_comments",
-        )
-    )
-
     ticket = get_object_or_404(
-        ticket_queryset,
+        Ticket.objects.select_related(
+            "requester",
+            "assigned_agent",
+            "category",
+        ),
         pk=ticket_id,
         requester=request.user,
     )
 
+    public_comments = (
+        ticket.comments.filter(is_internal=False)
+        .select_related("author")
+        .order_by("created_at")
+    )
+
     context = {
         "ticket": ticket,
+        "public_comments": public_comments,
+        "comment_form": RequesterCommentForm(),
+        "can_comment": ticket.status != Ticket.Status.CLOSED,
     }
 
     return render(
         request,
         "tickets/ticket_detail.html",
         context,
+    )
+
+
+@login_required
+@require_POST
+def requester_comment_create(
+    request: HttpRequest,
+    ticket_id: int,
+) -> HttpResponse:
+    if not request.user.is_requester:
+        return HttpResponseForbidden(
+            "Only requesters can add comments through this page."
+        )
+
+    ticket = get_object_or_404(
+        Ticket,
+        pk=ticket_id,
+        requester=request.user,
+    )
+
+    if ticket.status == Ticket.Status.CLOSED:
+        messages.error(
+            request,
+            "Closed tickets cannot receive new requester comments.",
+        )
+
+        return redirect(
+            "tickets:detail",
+            ticket_id=ticket.pk,
+        )
+
+    form = RequesterCommentForm(request.POST)
+
+    if form.is_valid():
+        comment = form.save(commit=False)
+        comment.ticket = ticket
+        comment.author = request.user
+        comment.is_internal = False
+        comment.full_clean()
+        comment.save()
+
+        messages.success(
+            request,
+            "Your reply was added successfully.",
+        )
+
+        return redirect(
+            "tickets:detail",
+            ticket_id=ticket.pk,
+        )
+
+    public_comments = (
+        TicketComment.objects.filter(
+            ticket=ticket,
+            is_internal=False,
+        )
+        .select_related("author")
+        .order_by("created_at")
+    )
+
+    context = {
+        "ticket": ticket,
+        "comment_form": form,
+        "public_comments": public_comments,
+        "can_comment": True,
+    }
+
+    return render(
+        request,
+        "tickets/ticket_detail.html",
+        context,
+        status=400,
     )
 
 
