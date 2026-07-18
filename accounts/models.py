@@ -28,3 +28,10 @@ class User(AbstractUser):
     @property
     def is_helpdesk_admin(self) -> bool:
         return self.role == self.Role.ADMIN
+
+    @property
+    def is_support_staff(self) -> bool:
+        return self.role in {
+            self.Role.AGENT,
+            self.Role.ADMIN,
+        }

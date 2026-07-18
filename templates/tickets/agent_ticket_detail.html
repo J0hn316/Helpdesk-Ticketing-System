@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}
+    {{ ticket.ticket_number }} | Support Queue
+{% endblock %}
+
+{% block content %}
+    <article>
+        <header>
+            <p>
+                <a href="{% url 'tickets:agent-queue' %}">
+                    Back to support queue
+                </a>
+            </p>
+
+            <p>{{ ticket.ticket_number }}</p>
+
+            <h1>{{ ticket.title }}</h1>
+        </header>
+
+        <section aria-labelledby="agent-ticket-details-heading">
+            <h2 id="agent-ticket-details-heading">
+                Ticket details
+            </h2>
+
+            <dl>
+                <div>
+                    <dt>Requester</dt>
+                    <dd>
+                        {{ ticket.requester.get_full_name|default:ticket.requester.username }}
+                    </dd>
+                </div>
+
+                <div>
+                    <dt>Requester email</dt>
+                    <dd>
+                        {% if ticket.requester.email %}
+                            {{ ticket.requester.email }}
+                        {% else %}
+                            Not provided
+                        {% endif %}
+                    </dd>
+                </div>
+
+                <div>
+                    <dt>Status</dt>
+                    <dd>{{ ticket.get_status_display }}</dd>
+                </div>
+
+                <div>
+                    <dt>Priority</dt>
+                    <dd>{{ ticket.get_priority_display }}</dd>
+                </div>
+
+                <div>
+                    <dt>Category</dt>
+                    <dd>{{ ticket.category.name }}</dd>
+                </div>
+
+                <div>
+                    <dt>Assigned agent</dt>
+                    <dd>
+                        {% if ticket.assigned_agent %}
+                            {{ ticket.assigned_agent.get_full_name|default:ticket.assigned_agent.username }}
+                        {% else %}
+                            Unassigned
+                        {% endif %}
+                    </dd>
+                </div>
+
+                <div>
+                    <dt>Created</dt>
+                    <dd>
+                        {{ ticket.created_at|date:"M j, Y g:i A" }}
+                    </dd>
+                </div>
+
+                <div>
+                    <dt>Last updated</dt>
+                    <dd>
+                        {{ ticket.updated_at|date:"M j, Y g:i A" }}
+                    </dd>
+                </div>
+
+                {% if ticket.resolved_at %}
+                    <div>
+                        <dt>Resolved</dt>
+                        <dd>
+                            {{ ticket.resolved_at|date:"M j, Y g:i A" }}
+                        </dd>
+                    </div>
+                {% endif %}
+
+                {% if ticket.closed_at %}
+                    <div>
+                        <dt>Closed</dt>
+                        <dd>
+                            {{ ticket.closed_at|date:"M j, Y g:i A" }}
+                        </dd>
+                    </div>
+                {% endif %}
+            </dl>
+        </section>
+
+        <section aria-labelledby="agent-description-heading">
+            <h2 id="agent-description-heading">
+                Description
+            </h2>
+
+            <p>{{ ticket.description|linebreaksbr }}</p>
+        </section>
+
+        <section aria-labelledby="agent-conversation-heading">
+            <h2 id="agent-conversation-heading">
+                Complete conversation
+            </h2>
+
+            {% if comments %}
+                {% for comment in comments %}
+                    <article>
+                        <header>
+                            <strong>
+                                {{ comment.author.get_full_name|default:comment.author.username }}
+                            </strong>
+
+                            {% if comment.is_internal %}
+                                <span>Internal note</span>
+                            {% elif comment.author.is_support_staff %}
+                                <span>Public support reply</span>
+                            {% else %}
+                                <span>Requester comment</span>
+                            {% endif %}
+
+                            <time
+                                datetime="{{ comment.created_at|date:'c' }}"
+                            >
+                                {{ comment.created_at|date:"M j, Y g:i A" }}
+                            </time>
+                        </header>
+
+                        <p>{{ comment.body|linebreaksbr }}</p>
+
+                        {% if comment.updated_at != comment.created_at %}
+                            <small>Edited</small>
+                        {% endif %}
+                    </article>
+                {% endfor %}
+            {% else %}
+                <p>
+                    No comments or internal notes have been added.
+                </p>
+            {% endif %}
+        </section>
+    </article>
+{% endblock %}

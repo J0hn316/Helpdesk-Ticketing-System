@@ -979,10 +979,11 @@ class RequesterTicketListViewTests(TestCase):
         response = self.client.get(
             reverse("dashboard:home"),
         )
+        requester_ticket_list_link = f'href="{reverse("tickets:list")}"'
 
         self.assertNotContains(
             response,
-            reverse("tickets:list"),
+            requester_ticket_list_link,
         )
 
     def test_helpdesk_admin_navigation_does_not_contain_ticket_list_link(
@@ -993,10 +994,11 @@ class RequesterTicketListViewTests(TestCase):
         response = self.client.get(
             reverse("dashboard:home"),
         )
+        requester_ticket_list_link = f'href="{reverse("tickets:list")}"'
 
         self.assertNotContains(
             response,
-            reverse("tickets:list"),
+            requester_ticket_list_link,
         )
 
 
@@ -1293,32 +1295,31 @@ class RequesterTicketDetailViewTests(TestCase):
             RequesterCommentForm,
         )
 
+    def test_closed_ticket_hides_comment_form(self) -> None:
+        closed_ticket = Ticket.objects.create(
+            title="Closed network issue",
+            description=("This network issue has completed the workflow."),
+            requester=self.requester,
+            category=self.category,
+            status=Ticket.Status.CLOSED,
+        )
+        self.client.force_login(self.requester)
 
-def test_closed_ticket_hides_comment_form(self) -> None:
-    closed_ticket = Ticket.objects.create(
-        title="Closed network issue",
-        description=("This network issue has completed the workflow."),
-        requester=self.requester,
-        category=self.category,
-        status=Ticket.Status.CLOSED,
-    )
-    self.client.force_login(self.requester)
+        response = self.client.get(
+            self.detail_url(closed_ticket),
+        )
 
-    response = self.client.get(
-        self.detail_url(closed_ticket),
-    )
-
-    self.assertContains(
-        response,
-        "This ticket is closed and cannot receive new replies.",
-    )
-    self.assertNotContains(
-        response,
-        reverse(
-            "tickets:comment-create",
-            kwargs={"ticket_id": closed_ticket.pk},
-        ),
-    )
+        self.assertContains(
+            response,
+            "This ticket is closed and cannot receive new replies.",
+        )
+        self.assertNotContains(
+            response,
+            reverse(
+                "tickets:comment-create",
+                kwargs={"ticket_id": closed_ticket.pk},
+            ),
+        )
 
 
 class RequesterCommentCreateViewTests(TestCase):
@@ -1705,3 +1706,515 @@ class RequesterCommentFormTests(TestCase):
         self.assertNotIn("ticket", form.fields)
         self.assertNotIn("author", form.fields)
         self.assertNotIn("is_internal", form.fields)
+
+
+class AgentTicketQueueViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Network",
+        )
+
+        cls.open_ticket = Ticket.objects.create(
+            title="Open network issue",
+            description=("The requester cannot connect to the network."),
+            requester=cls.requester,
+            category=cls.category,
+            status=Ticket.Status.OPEN,
+        )
+        cls.in_progress_ticket = Ticket.objects.create(
+            title="In-progress network issue",
+            description=("An agent is currently investigating this issue."),
+            requester=cls.requester,
+            assigned_agent=cls.agent,
+            category=cls.category,
+            status=Ticket.Status.IN_PROGRESS,
+            priority=Ticket.Priority.HIGH,
+        )
+        cls.resolved_ticket = Ticket.objects.create(
+            title="Resolved network issue",
+            description=("Support believes this issue has been resolved."),
+            requester=cls.requester,
+            assigned_agent=cls.agent,
+            category=cls.category,
+            status=Ticket.Status.RESOLVED,
+        )
+        cls.closed_ticket = Ticket.objects.create(
+            title="Closed network issue",
+            description=("This issue has completed the support workflow."),
+            requester=cls.requester,
+            assigned_agent=cls.agent,
+            category=cls.category,
+            status=Ticket.Status.CLOSED,
+        )
+
+    def test_agent_queue_requires_authentication(self) -> None:
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        expected_url = (
+            f"{reverse('accounts:login')}" f"?next={reverse('tickets:agent-queue')}"
+        )
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_requester_cannot_view_agent_queue(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_agent_can_view_queue(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(
+            response,
+            "tickets/agent_ticket_queue.html",
+        )
+        self.assertContains(response, "Support queue")
+
+    def test_helpdesk_admin_can_view_queue(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Support queue")
+
+    def test_queue_contains_non_closed_tickets(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        self.assertContains(
+            response,
+            self.open_ticket.ticket_number,
+        )
+        self.assertContains(
+            response,
+            self.in_progress_ticket.ticket_number,
+        )
+        self.assertContains(
+            response,
+            self.resolved_ticket.ticket_number,
+        )
+
+    def test_queue_excludes_closed_tickets(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        self.assertNotContains(
+            response,
+            self.closed_ticket.ticket_number,
+        )
+        self.assertNotContains(
+            response,
+            self.closed_ticket.title,
+        )
+
+    def test_queue_context_excludes_closed_tickets(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        tickets = list(response.context["tickets"])
+
+        self.assertIn(self.open_ticket, tickets)
+        self.assertIn(self.in_progress_ticket, tickets)
+        self.assertIn(self.resolved_ticket, tickets)
+        self.assertNotIn(self.closed_ticket, tickets)
+
+    def test_queue_displays_ticket_metadata(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        self.assertContains(
+            response,
+            self.requester.username,
+        )
+        self.assertContains(
+            response,
+            self.category.name,
+        )
+        self.assertContains(
+            response,
+            self.in_progress_ticket.get_status_display(),
+        )
+        self.assertContains(
+            response,
+            self.in_progress_ticket.get_priority_display(),
+        )
+
+    def test_queue_marks_unassigned_ticket(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        self.assertContains(response, "Unassigned")
+
+    def test_queue_contains_agent_detail_links(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        detail_url = reverse(
+            "tickets:agent-detail",
+            kwargs={"ticket_id": self.open_ticket.pk},
+        )
+
+        self.assertContains(response, detail_url)
+
+    def test_empty_queue_displays_empty_state(self) -> None:
+        Ticket.objects.exclude(status=Ticket.Status.CLOSED).delete()
+
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("tickets:agent-queue"),
+        )
+
+        self.assertContains(response, "No active tickets")
+
+    def test_agent_navigation_contains_queue_link(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertContains(
+            response,
+            reverse("tickets:agent-queue"),
+        )
+
+    def test_helpdesk_admin_navigation_contains_queue_link(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertContains(
+            response,
+            reverse("tickets:agent-queue"),
+        )
+
+    def test_requester_navigation_does_not_contain_queue_link(
+        self,
+    ) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            reverse("dashboard:home"),
+        )
+
+        self.assertNotContains(
+            response,
+            reverse("tickets:agent-queue"),
+        )
+
+
+class AgentTicketDetailViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            email="requester@example.com",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.other_agent = User.objects.create_user(
+            username="otheragent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Software",
+        )
+        cls.ticket = Ticket.objects.create(
+            title="Accounting application error",
+            description=("The application closes immediately after login."),
+            requester=cls.requester,
+            assigned_agent=cls.other_agent,
+            category=cls.category,
+            status=Ticket.Status.IN_PROGRESS,
+            priority=Ticket.Priority.HIGH,
+        )
+        cls.closed_ticket = Ticket.objects.create(
+            title="Previously closed software issue",
+            description=("This ticket is available for historical review."),
+            requester=cls.requester,
+            assigned_agent=cls.agent,
+            category=cls.category,
+            status=Ticket.Status.CLOSED,
+        )
+        cls.requester_comment = TicketComment.objects.create(
+            ticket=cls.ticket,
+            author=cls.requester,
+            body="The error still occurs after restarting.",
+        )
+        cls.public_agent_comment = TicketComment.objects.create(
+            ticket=cls.ticket,
+            author=cls.agent,
+            body="Please reinstall the application.",
+        )
+        cls.internal_note = TicketComment.objects.create(
+            ticket=cls.ticket,
+            author=cls.agent,
+            body=("Application logs show a missing configuration file."),
+            is_internal=True,
+        )
+
+    def detail_url(self, ticket: Ticket | None = None) -> str:
+        selected_ticket = ticket or self.ticket
+
+        return reverse(
+            "tickets:agent-detail",
+            kwargs={"ticket_id": selected_ticket.pk},
+        )
+
+    def test_agent_detail_requires_authentication(self) -> None:
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        expected_url = f"{reverse('accounts:login')}" f"?next={self.detail_url()}"
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_requester_cannot_view_agent_detail(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_agent_can_view_any_ticket(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(
+            response,
+            "tickets/agent_ticket_detail.html",
+        )
+        self.assertContains(
+            response,
+            self.ticket.ticket_number,
+        )
+
+    def test_helpdesk_admin_can_view_any_ticket(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            self.ticket.ticket_number,
+        )
+
+    def test_agent_can_view_ticket_assigned_to_another_agent(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            self.other_agent.username,
+        )
+
+    def test_agent_can_view_closed_ticket_directly(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(self.closed_ticket),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            self.closed_ticket.ticket_number,
+        )
+        self.assertContains(response, "Closed")
+
+    def test_nonexistent_ticket_returns_404(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            reverse(
+                "tickets:agent-detail",
+                kwargs={"ticket_id": 999999},
+            ),
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_detail_displays_ticket_metadata(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertContains(
+            response,
+            self.requester.username,
+        )
+        self.assertContains(
+            response,
+            self.requester.email,
+        )
+        self.assertContains(
+            response,
+            self.ticket.get_status_display(),
+        )
+        self.assertContains(
+            response,
+            self.ticket.get_priority_display(),
+        )
+        self.assertContains(
+            response,
+            self.category.name,
+        )
+        self.assertContains(
+            response,
+            self.other_agent.username,
+        )
+
+    def test_detail_displays_public_comments(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertContains(
+            response,
+            self.requester_comment.body,
+        )
+        self.assertContains(
+            response,
+            self.public_agent_comment.body,
+        )
+
+    def test_detail_displays_internal_notes(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertContains(
+            response,
+            self.internal_note.body,
+        )
+        self.assertContains(response, "Internal note")
+
+    def test_comments_are_oldest_first(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        comments = list(response.context["comments"])
+
+        self.assertEqual(
+            comments,
+            [
+                self.requester_comment,
+                self.public_agent_comment,
+                self.internal_note,
+            ],
+        )
+
+    def test_ticket_without_comments_displays_empty_message(
+        self,
+    ) -> None:
+        ticket_without_comments = Ticket.objects.create(
+            title="Ticket without conversation",
+            description=("No one has added a comment to this ticket."),
+            requester=self.requester,
+            category=self.category,
+        )
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(ticket_without_comments),
+        )
+
+        self.assertContains(
+            response,
+            "No comments or internal notes have been added.",
+        )

@@ -35,8 +35,16 @@
                     </a>
                 {% elif user.is_agent %}
                     <span>Support Agent</span>
+
+                    <a href="{% url 'tickets:agent-queue' %}">
+                        Support queue
+                    </a>
                 {% elif user.is_helpdesk_admin %}
                     <span>Helpdesk Administrator</span>
+
+                    <a href="{% url 'tickets:agent-queue' %}">
+                        Support queue
+                    </a>
                 {% endif %}
 
                 {% if user.is_staff %}

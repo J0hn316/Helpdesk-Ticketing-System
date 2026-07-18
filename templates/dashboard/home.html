@@ -22,7 +22,7 @@
 
             <p>
                 <a href="{% url 'tickets:list' %}">
-            View my tickets
+                    View my tickets
                 </a>
             </p>
 
@@ -35,15 +35,25 @@
             <h2>Support agent workspace</h2>
 
             <p>
-                From here, you will be able to review the support
-                queue, accept assignments, and update tickets.
+                Review the support queue, investigate requests,
+                and manage your assigned tickets.
+            </p>
+            <p>
+                <a href="{% url 'tickets:agent-queue' %}">
+                    Open support queue
+                </a>
             </p>
         {% elif user.is_helpdesk_admin %}
             <h2>Helpdesk administration workspace</h2>
 
             <p>
-                From here, you will be able to oversee tickets,
-                assignments, and helpdesk operations.
+                Oversee tickets, assignments, and helpdesk operations.
+            </p>
+
+            <p>
+                <a href="{% url 'tickets:agent-queue' %}">
+                    Open support queue
+                </a>
             </p>
         {% endif %}
     </section>

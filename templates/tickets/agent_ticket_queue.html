@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Support Queue | Helpdesk
+{% endblock %}
+
+{% block content %}
+    <section>
+        <header>
+            <h1>Support queue</h1>
+
+            <p>
+                Review active support requests from all requesters.
+            </p>
+        </header>
+
+        {% if tickets %}
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Ticket</th>
+                        <th scope="col">Title</th>
+                        <th scope="col">Requester</th>
+                        <th scope="col">Category</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Priority</th>
+                        <th scope="col">Assigned agent</th>
+                        <th scope="col">Created</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for ticket in tickets %}
+                        <tr>
+                            <td>
+                                <a
+                                    href="{% url 'tickets:agent-detail' ticket.pk %}"
+                                >
+                                    {{ ticket.ticket_number }}
+                                </a>
+                            </td>
+
+                            <td>{{ ticket.title }}</td>
+
+                            <td>
+                                {{ ticket.requester.get_full_name|default:ticket.requester.username }}
+                            </td>
+
+                            <td>{{ ticket.category.name }}</td>
+
+                            <td>{{ ticket.get_status_display }}</td>
+
+                            <td>{{ ticket.get_priority_display }}</td>
+
+                            <td>
+                                {% if ticket.assigned_agent %}
+                                    {{ ticket.assigned_agent.get_full_name|default:ticket.assigned_agent.username }}
+                                {% else %}
+                                    <strong>Unassigned</strong>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {{ ticket.created_at|date:"M j, Y g:i A" }}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div>
+                <h2>No active tickets</h2>
+
+                <p>
+                    There are currently no open, in-progress,
+                    pending, or resolved tickets.
+                </p>
+            </div>
+        {% endif %}
+    </section>
+{% endblock %}

@@ -13,6 +13,63 @@ from .forms import TicketCreateForm, RequesterCommentForm
 
 
 @login_required
+def agent_ticket_queue(request: HttpRequest) -> HttpResponse:
+    if not request.user.is_support_staff:
+        return HttpResponseForbidden("Only support staff can view the ticket queue.")
+
+    tickets = (
+        Ticket.objects.exclude(status=Ticket.Status.CLOSED)
+        .select_related(
+            "requester",
+            "assigned_agent",
+            "category",
+        )
+        .order_by("-created_at")
+    )
+
+    context = {
+        "tickets": tickets,
+    }
+
+    return render(
+        request,
+        "tickets/agent_ticket_queue.html",
+        context,
+    )
+
+
+@login_required
+def agent_ticket_detail(
+    request: HttpRequest,
+    ticket_id: int,
+) -> HttpResponse:
+    if not request.user.is_support_staff:
+        return HttpResponseForbidden("Only support staff can view this ticket page.")
+
+    ticket = get_object_or_404(
+        Ticket.objects.select_related(
+            "requester",
+            "assigned_agent",
+            "category",
+        ),
+        pk=ticket_id,
+    )
+
+    comments = ticket.comments.select_related("author").order_by("created_at")
+
+    context = {
+        "ticket": ticket,
+        "comments": comments,
+    }
+
+    return render(
+        request,
+        "tickets/agent_ticket_detail.html",
+        context,
+    )
+
+
+@login_required
 def ticket_list(request: HttpRequest) -> HttpResponse:
     if not request.user.is_requester:
         return HttpResponseForbidden("Only requesters can view this ticket list.")

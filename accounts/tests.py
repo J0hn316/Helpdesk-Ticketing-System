@@ -58,6 +58,33 @@ class UserModelTests(TestCase):
         self.assertNotEqual(user.password, "testpass123")
         self.assertTrue(user.check_password("testpass123"))
 
+    def test_requester_is_not_support_staff(self) -> None:
+        user = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+
+        self.assertFalse(user.is_support_staff)
+
+    def test_agent_is_support_staff(self) -> None:
+        user = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+
+        self.assertTrue(user.is_support_staff)
+
+    def test_helpdesk_admin_is_support_staff(self) -> None:
+        user = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+
+        self.assertTrue(user.is_support_staff)
+
 
 class AuthenticationViewTests(TestCase):
     def setUp(self) -> None:
