@@ -4,8 +4,9 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db.models.deletion import ProtectedError
 
-from .forms import TicketCreateForm, RequesterCommentForm
+from accounts.models import User as AccountUser
 from .models import Category, Ticket, TicketComment
+from .forms import TicketCreateForm, RequesterCommentForm, TicketAssignmentForm
 
 User = get_user_model()
 
@@ -492,6 +493,96 @@ class TicketCreateFormTests(TestCase):
         self.assertIn("description", form.errors)
 
 
+class TicketAssignmentFormTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+
+    def test_form_contains_only_assigned_agent_field(self) -> None:
+        form = TicketAssignmentForm()
+
+        self.assertEqual(
+            list(form.fields),
+            ["assigned_agent"],
+        )
+
+    def test_form_queryset_contains_agents(self) -> None:
+        form = TicketAssignmentForm()
+
+        self.assertIn(
+            self.agent,
+            form.fields["assigned_agent"].queryset,
+        )
+
+    def test_form_queryset_contains_helpdesk_admins(self) -> None:
+        form = TicketAssignmentForm()
+
+        self.assertIn(
+            self.helpdesk_admin,
+            form.fields["assigned_agent"].queryset,
+        )
+
+    def test_form_queryset_excludes_requesters(self) -> None:
+        form = TicketAssignmentForm()
+
+        self.assertNotIn(
+            self.requester,
+            form.fields["assigned_agent"].queryset,
+        )
+
+    def test_agent_assignment_is_valid(self) -> None:
+        form = TicketAssignmentForm(
+            data={
+                "assigned_agent": self.agent.pk,
+            }
+        )
+
+        self.assertTrue(form.is_valid())
+
+    def test_helpdesk_admin_assignment_is_valid(self) -> None:
+        form = TicketAssignmentForm(
+            data={
+                "assigned_agent": self.helpdesk_admin.pk,
+            }
+        )
+
+        self.assertTrue(form.is_valid())
+
+    def test_requester_assignment_is_rejected(self) -> None:
+        form = TicketAssignmentForm(
+            data={
+                "assigned_agent": self.requester.pk,
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("assigned_agent", form.errors)
+
+    def test_blank_assignment_is_rejected(self) -> None:
+        form = TicketAssignmentForm(
+            data={
+                "assigned_agent": "",
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("assigned_agent", form.errors)
+
+
 class TicketCreateViewTests(TestCase):
     @classmethod
     def setUpTestData(cls) -> None:
@@ -774,6 +865,586 @@ class TicketCreateViewTests(TestCase):
         self.assertNotContains(
             response,
             reverse("tickets:create"),
+        )
+
+
+class TicketClaimViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.other_agent = User.objects.create_user(
+            username="otheragent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Hardware",
+        )
+        cls.unassigned_ticket = Ticket.objects.create(
+            title="Unassigned hardware issue",
+            description=("The requester needs help with a hardware issue."),
+            requester=cls.requester,
+            category=cls.category,
+        )
+        cls.assigned_ticket = Ticket.objects.create(
+            title="Assigned hardware issue",
+            description=("This ticket is already assigned to another agent."),
+            requester=cls.requester,
+            assigned_agent=cls.other_agent,
+            category=cls.category,
+        )
+        cls.closed_ticket = Ticket.objects.create(
+            title="Closed hardware issue",
+            description=("This ticket is closed and cannot be claimed."),
+            requester=cls.requester,
+            category=cls.category,
+            status=Ticket.Status.CLOSED,
+        )
+
+    def claim_url(self, ticket: Ticket | None = None) -> str:
+        selected_ticket = ticket or self.unassigned_ticket
+
+        return reverse(
+            "tickets:claim",
+            kwargs={"ticket_id": selected_ticket.pk},
+        )
+
+    def test_claim_requires_authentication(self) -> None:
+        response = self.client.post(
+            self.claim_url(),
+        )
+
+        expected_url = f"{reverse('accounts:login')}" f"?next={self.claim_url()}"
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_claim_does_not_accept_get(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.claim_url(),
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_requester_cannot_claim_ticket(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.claim_url(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        self.unassigned_ticket.refresh_from_db()
+
+        self.assertIsNone(
+            self.unassigned_ticket.assigned_agent,
+        )
+
+    def test_helpdesk_admin_cannot_use_claim_endpoint(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.claim_url(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        self.unassigned_ticket.refresh_from_db()
+
+        self.assertIsNone(
+            self.unassigned_ticket.assigned_agent,
+        )
+
+    def test_agent_can_claim_unassigned_ticket(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.claim_url(),
+        )
+
+        self.unassigned_ticket.refresh_from_db()
+
+        self.assertEqual(
+            self.unassigned_ticket.assigned_agent,
+            self.agent,
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:agent-detail",
+                kwargs={"ticket_id": self.unassigned_ticket.pk},
+            ),
+        )
+
+    def test_claim_success_message_is_displayed(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.claim_url(),
+            follow=True,
+        )
+
+        self.unassigned_ticket.refresh_from_db()
+
+        self.assertContains(
+            response,
+            (f"Ticket {self.unassigned_ticket.ticket_number} " "was assigned to you."),
+        )
+
+    def test_agent_cannot_claim_already_assigned_ticket(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.claim_url(self.assigned_ticket),
+        )
+
+        self.assigned_ticket.refresh_from_db()
+
+        self.assertEqual(
+            self.assigned_ticket.assigned_agent,
+            self.other_agent,
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:agent-detail",
+                kwargs={"ticket_id": self.assigned_ticket.pk},
+            ),
+        )
+
+    def test_already_assigned_ticket_displays_error_message(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.claim_url(self.assigned_ticket),
+            follow=True,
+        )
+
+        self.assertContains(
+            response,
+            "This ticket is already assigned.",
+        )
+
+    def test_agent_cannot_claim_closed_ticket(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.claim_url(self.closed_ticket),
+        )
+
+        self.closed_ticket.refresh_from_db()
+
+        self.assertIsNone(
+            self.closed_ticket.assigned_agent,
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:agent-detail",
+                kwargs={"ticket_id": self.closed_ticket.pk},
+            ),
+        )
+
+    def test_closed_ticket_claim_displays_error_message(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.claim_url(self.closed_ticket),
+            follow=True,
+        )
+
+        self.assertContains(
+            response,
+            "Closed tickets cannot be claimed.",
+        )
+
+    def test_nonexistent_ticket_returns_404(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            reverse(
+                "tickets:claim",
+                kwargs={"ticket_id": 999999},
+            ),
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_forged_assigned_agent_is_ignored(self) -> None:
+        self.client.force_login(self.agent)
+
+        self.client.post(
+            self.claim_url(),
+            {
+                "assigned_agent": self.other_agent.pk,
+            },
+        )
+
+        self.unassigned_ticket.refresh_from_db()
+
+        self.assertEqual(
+            self.unassigned_ticket.assigned_agent,
+            self.agent,
+        )
+
+
+class TicketAssignViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.other_agent = User.objects.create_user(
+            username="otheragent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Network",
+        )
+        cls.ticket = Ticket.objects.create(
+            title="Network assignment issue",
+            description=("This ticket needs to be assigned by an admin."),
+            requester=cls.requester,
+            category=cls.category,
+        )
+        cls.assigned_ticket = Ticket.objects.create(
+            title="Already assigned network issue",
+            description=("This ticket is already assigned."),
+            requester=cls.requester,
+            assigned_agent=cls.agent,
+            category=cls.category,
+        )
+        cls.closed_ticket = Ticket.objects.create(
+            title="Closed network assignment issue",
+            description=("This ticket is closed and should not be reassigned."),
+            requester=cls.requester,
+            category=cls.category,
+            status=Ticket.Status.CLOSED,
+        )
+
+    def assign_url(self, ticket: Ticket | None = None) -> str:
+        selected_ticket = ticket or self.ticket
+
+        return reverse(
+            "tickets:assign",
+            kwargs={"ticket_id": selected_ticket.pk},
+        )
+
+    def valid_assignment_data(
+        self,
+        assigned_agent: AccountUser | None = None,
+    ) -> dict[str, int]:
+        selected_agent = assigned_agent or self.agent
+
+        return {
+            "assigned_agent": selected_agent.pk,
+        }
+
+    def test_assign_requires_authentication(self) -> None:
+        response = self.client.post(
+            self.assign_url(),
+            self.valid_assignment_data(),
+        )
+
+        expected_url = f"{reverse('accounts:login')}" f"?next={self.assign_url()}"
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_assign_does_not_accept_get(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.get(
+            self.assign_url(),
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_requester_cannot_assign_ticket(self) -> None:
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.assign_url(),
+            self.valid_assignment_data(),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        self.ticket.refresh_from_db()
+
+        self.assertIsNone(self.ticket.assigned_agent)
+
+    def test_agent_cannot_use_admin_assign_endpoint(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.assign_url(),
+            self.valid_assignment_data(self.other_agent),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+        self.ticket.refresh_from_db()
+
+        self.assertIsNone(self.ticket.assigned_agent)
+
+    def test_helpdesk_admin_can_assign_ticket_to_agent(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.assign_url(),
+            self.valid_assignment_data(self.agent),
+        )
+
+        self.ticket.refresh_from_db()
+
+        self.assertEqual(
+            self.ticket.assigned_agent,
+            self.agent,
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:agent-detail",
+                kwargs={"ticket_id": self.ticket.pk},
+            ),
+        )
+
+    def test_helpdesk_admin_can_assign_ticket_to_admin(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.assign_url(),
+            self.valid_assignment_data(self.helpdesk_admin),
+        )
+
+        self.ticket.refresh_from_db()
+
+        self.assertEqual(
+            self.ticket.assigned_agent,
+            self.helpdesk_admin,
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:agent-detail",
+                kwargs={"ticket_id": self.ticket.pk},
+            ),
+        )
+
+    def test_helpdesk_admin_can_reassign_ticket(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        self.client.post(
+            self.assign_url(self.assigned_ticket),
+            self.valid_assignment_data(self.other_agent),
+        )
+
+        self.assigned_ticket.refresh_from_db()
+
+        self.assertEqual(
+            self.assigned_ticket.assigned_agent,
+            self.other_agent,
+        )
+
+    def test_success_message_is_displayed(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.assign_url(),
+            self.valid_assignment_data(self.agent),
+            follow=True,
+        )
+
+        self.ticket.refresh_from_db()
+
+        self.assertContains(
+            response,
+            (f"Ticket {self.ticket.ticket_number} was assigned " f"to {self.agent}."),
+        )
+
+    def test_helpdesk_admin_cannot_assign_ticket_to_requester(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.assign_url(),
+            self.valid_assignment_data(self.requester),
+            follow=True,
+        )
+
+        self.ticket.refresh_from_db()
+
+        self.assertIsNone(self.ticket.assigned_agent)
+        self.assertContains(
+            response,
+            "Ticket assignment could not be completed.",
+        )
+
+    def test_blank_assignment_is_rejected(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.assign_url(),
+            {
+                "assigned_agent": "",
+            },
+            follow=True,
+        )
+
+        self.ticket.refresh_from_db()
+
+        self.assertIsNone(self.ticket.assigned_agent)
+        self.assertContains(
+            response,
+            "Ticket assignment could not be completed.",
+        )
+
+    def test_helpdesk_admin_cannot_assign_closed_ticket(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.assign_url(self.closed_ticket),
+            self.valid_assignment_data(self.agent),
+        )
+
+        self.closed_ticket.refresh_from_db()
+
+        self.assertIsNone(
+            self.closed_ticket.assigned_agent,
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:agent-detail",
+                kwargs={"ticket_id": self.closed_ticket.pk},
+            ),
+        )
+
+    def test_closed_ticket_assignment_displays_error_message(
+        self,
+    ) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            self.assign_url(self.closed_ticket),
+            self.valid_assignment_data(self.agent),
+            follow=True,
+        )
+
+        self.assertContains(
+            response,
+            "Closed tickets cannot be reassigned.",
+        )
+
+    def test_nonexistent_ticket_returns_404(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        response = self.client.post(
+            reverse(
+                "tickets:assign",
+                kwargs={"ticket_id": 999999},
+            ),
+            self.valid_assignment_data(),
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_forged_status_is_ignored(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        data = self.valid_assignment_data(self.agent)
+        data["status"] = Ticket.Status.CLOSED
+
+        self.client.post(
+            self.assign_url(),
+            data,
+        )
+
+        self.ticket.refresh_from_db()
+
+        self.assertEqual(
+            self.ticket.assigned_agent,
+            self.agent,
+        )
+        self.assertEqual(
+            self.ticket.status,
+            Ticket.Status.OPEN,
+        )
+
+    def test_forged_requester_is_ignored(self) -> None:
+        self.client.force_login(self.helpdesk_admin)
+
+        data = self.valid_assignment_data(self.agent)
+        data["requester"] = self.agent.pk
+
+        self.client.post(
+            self.assign_url(),
+            data,
+        )
+
+        self.ticket.refresh_from_db()
+
+        self.assertEqual(
+            self.ticket.requester,
+            self.requester,
+        )
+        self.assertEqual(
+            self.ticket.assigned_agent,
+            self.agent,
         )
 
 
@@ -2218,3 +2889,95 @@ class AgentTicketDetailViewTests(TestCase):
             response,
             "No comments or internal notes have been added.",
         )
+
+    def test_agent_sees_claim_button_for_unassigned_ticket(
+        self,
+    ) -> None:
+        unassigned_ticket = Ticket.objects.create(
+            title="Unassigned support issue",
+            description=("This ticket is available for an agent to claim."),
+            requester=self.requester,
+            category=self.category,
+        )
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(unassigned_ticket),
+        )
+
+        self.assertContains(response, "Claim this ticket")
+        self.assertContains(
+            response,
+            reverse(
+                "tickets:claim",
+                kwargs={"ticket_id": unassigned_ticket.pk},
+            ),
+        )
+
+
+def test_agent_does_not_see_claim_button_for_assigned_ticket(
+    self,
+) -> None:
+    self.client.force_login(self.agent)
+
+    response = self.client.get(
+        self.detail_url(),
+    )
+
+    self.assertNotContains(response, "Claim this ticket")
+
+
+def test_agent_does_not_see_admin_assignment_form(self) -> None:
+    self.client.force_login(self.agent)
+
+    response = self.client.get(
+        self.detail_url(),
+    )
+
+    self.assertNotContains(response, "Assign ticket")
+
+
+def test_helpdesk_admin_sees_assignment_form(self) -> None:
+    self.client.force_login(self.helpdesk_admin)
+
+    response = self.client.get(
+        self.detail_url(),
+    )
+
+    self.assertContains(response, "Assign ticket")
+    self.assertContains(
+        response,
+        reverse(
+            "tickets:assign",
+            kwargs={"ticket_id": self.ticket.pk},
+        ),
+    )
+    self.assertIsInstance(
+        response.context["assignment_form"],
+        TicketAssignmentForm,
+    )
+
+
+def test_helpdesk_admin_does_not_see_claim_button(self) -> None:
+    self.client.force_login(self.helpdesk_admin)
+
+    response = self.client.get(
+        self.detail_url(),
+    )
+
+    self.assertNotContains(response, "Claim this ticket")
+
+
+def test_closed_ticket_hides_assignment_controls(self) -> None:
+    self.client.force_login(self.helpdesk_admin)
+
+    response = self.client.get(
+        self.detail_url(self.closed_ticket),
+    )
+
+    self.assertContains(
+        response,
+        "Closed tickets cannot be reassigned.",
+    )
+    self.assertNotContains(response, "Claim this ticket")
+    self.assertNotContains(response, "Assign ticket")

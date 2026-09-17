@@ -9,7 +9,7 @@ from django.http import (
 )
 
 from .models import Ticket, TicketComment
-from .forms import TicketCreateForm, RequesterCommentForm
+from .forms import TicketCreateForm, RequesterCommentForm, TicketAssignmentForm
 
 
 @login_required
@@ -60,34 +60,21 @@ def agent_ticket_detail(
     context = {
         "ticket": ticket,
         "comments": comments,
+        "assignment_form": TicketAssignmentForm(instance=ticket),
+        "can_claim": (
+            request.user.is_agent
+            and ticket.assigned_agent is None
+            and ticket.status != Ticket.Status.CLOSED
+        ),
+        "can_assign": (
+            request.user.is_helpdesk_admin and ticket.status != Ticket.Status.CLOSED
+        ),
+        "is_closed": ticket.status == Ticket.Status.CLOSED,
     }
 
     return render(
         request,
         "tickets/agent_ticket_detail.html",
-        context,
-    )
-
-
-@login_required
-def ticket_list(request: HttpRequest) -> HttpResponse:
-    if not request.user.is_requester:
-        return HttpResponseForbidden("Only requesters can view this ticket list.")
-
-    tickets = (
-        Ticket.objects.filter(requester=request.user)
-        .select_related(
-            "category",
-            "assigned_agent",
-        )
-        .order_by("-created_at")
-    )
-
-    context = {"tickets": tickets}
-
-    return render(
-        request,
-        "tickets/ticket_list.html",
         context,
     )
 
@@ -126,6 +113,118 @@ def ticket_detail(
     return render(
         request,
         "tickets/ticket_detail.html",
+        context,
+    )
+
+
+@login_required
+@require_POST
+def ticket_claim(request: HttpRequest, ticket_id: int) -> HttpResponse:
+    if not request.user.is_agent:
+        return HttpResponseForbidden("Only agents can claim tickets.")
+
+    ticket = get_object_or_404(Ticket, pk=ticket_id)
+
+    if ticket.status == Ticket.Status.CLOSED:
+        messages.error(request, "Closed tickets cannot be claimed.")
+
+        return redirect(
+            "tickets:agent-detail",
+            ticket_id=ticket.pk,
+        )
+
+    if ticket.assigned_agent is not None:
+        messages.error(
+            request,
+            "This ticket is already assigned.",
+        )
+
+        return redirect("tickets:agent-detail", ticket_id=ticket.pk)
+
+    ticket.assigned_agent = request.user
+    ticket.full_clean()
+    ticket.save()
+
+    messages.success(request, f"Ticket {ticket.ticket_number} was assigned to you.")
+
+    return redirect("tickets:agent-detail", ticket_id=ticket.pk)
+
+
+@login_required
+@require_POST
+def ticket_assign(request: HttpRequest, ticket_id: int) -> HttpResponse:
+    if not request.user.is_helpdesk_admin:
+        return HttpResponseForbidden("Only helpdesk administrators can assign tickets.")
+
+    ticket = get_object_or_404(
+        Ticket,
+        pk=ticket_id,
+    )
+
+    if ticket.status == Ticket.Status.CLOSED:
+        messages.error(
+            request,
+            "Closed tickets cannot be reassigned.",
+        )
+
+        return redirect(
+            "tickets:agent-detail",
+            ticket_id=ticket.pk,
+        )
+
+    form = TicketAssignmentForm(
+        request.POST,
+        instance=ticket,
+    )
+
+    if form.is_valid():
+        ticket = form.save(commit=False)
+        ticket.full_clean()
+        ticket.save()
+
+        messages.success(
+            request,
+            (
+                f"Ticket {ticket.ticket_number} was assigned "
+                f"to {ticket.assigned_agent}."
+            ),
+        )
+
+        return redirect(
+            "tickets:agent-detail",
+            ticket_id=ticket.pk,
+        )
+
+    messages.error(
+        request,
+        "Ticket assignment could not be completed.",
+    )
+
+    return redirect(
+        "tickets:agent-detail",
+        ticket_id=ticket.pk,
+    )
+
+
+@login_required
+def ticket_list(request: HttpRequest) -> HttpResponse:
+    if not request.user.is_requester:
+        return HttpResponseForbidden("Only requesters can view this ticket list.")
+
+    tickets = (
+        Ticket.objects.filter(requester=request.user)
+        .select_related(
+            "category",
+            "assigned_agent",
+        )
+        .order_by("-created_at")
+    )
+
+    context = {"tickets": tickets}
+
+    return render(
+        request,
+        "tickets/ticket_list.html",
         context,
     )
 

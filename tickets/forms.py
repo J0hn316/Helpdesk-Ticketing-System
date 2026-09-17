@@ -1,5 +1,7 @@
 from django import forms
+from django.contrib.auth import get_user_model
 
+from accounts.models import User
 from .models import Category, Ticket, TicketComment
 
 
@@ -77,3 +79,34 @@ class RequesterCommentForm(forms.ModelForm):
             )
 
         return body
+
+
+class TicketAssignmentForm(forms.ModelForm):
+    class Meta:
+        model = Ticket
+        fields = ("assigned_agent",)
+        labels = {
+            "assigned_agent": "Assign to",
+        }
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.fields["assigned_agent"].queryset = User.objects.filter(
+            role__in=[
+                User.Role.AGENT,
+                User.Role.ADMIN,
+            ]
+        ).order_by("username")
+
+        self.fields["assigned_agent"].required = True
+
+    def clean_assigned_agent(self) -> User:
+        assigned_agent = self.cleaned_data["assigned_agent"]
+
+        if not assigned_agent.is_support_staff:
+            raise forms.ValidationError(
+                "Tickets can only be assigned to support staff."
+            )
+
+        return assigned_agent
