@@ -1,14 +1,15 @@
 from django.urls import path
 
 from .views import (
-    agent_ticket_detail,
-    agent_ticket_queue,
-    requester_comment_create,
-    ticket_assign,
+    ticket_list,
     ticket_claim,
+    ticket_assign,
     ticket_create,
     ticket_detail,
-    ticket_list,
+    agent_ticket_queue,
+    agent_ticket_detail,
+    support_comment_create,
+    requester_comment_create,
 )
 
 app_name = "tickets"
@@ -34,6 +35,11 @@ urlpatterns = [
         "queue/<int:ticket_id>/",
         agent_ticket_detail,
         name="agent-detail",
+    ),
+    path(
+        "queue/<int:ticket_id>/comments/",
+        support_comment_create,
+        name="support-comment-create",
     ),
     path(
         "queue/<int:ticket_id>/claim/",

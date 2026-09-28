@@ -145,5 +145,31 @@ Queue {% endblock %} {% block content %}
                 <p>No comments or internal notes have been added.</p>
               {% endif %}
             </section>
+            <section aria-labelledby="support-update-heading">
+              <h2 id="support-update-heading">Add support update</h2>
+              {% if can_comment %}
+                <form method="post"
+                      action="{% url 'tickets:support-comment-create' ticket.pk %}">
+                  {% csrf_token %}
+                  {% if support_comment_form.non_field_errors %}
+                    <div>{{ support_comment_form.non_field_errors }}</div>
+                  {% endif %}
+                  <div>
+                    {{ support_comment_form.body.label_tag }}
+                    {{ support_comment_form.body }}
+                    {{ support_comment_form.body.errors }}
+                  </div>
+                  <div>
+                    {{ support_comment_form.is_internal }}
+                    {{ support_comment_form.is_internal.label_tag }}
+                    {{ support_comment_form.is_internal.errors }}
+                  </div>
+                  <p>Internal notes are visible only to support staff.</p>
+                  <button type="submit">Add update</button>
+                </form>
+              {% else %}
+                <p>This ticket is closed and cannot receive new support updates.</p>
+              {% endif %}
+            </section>
             </article>
           {% endblock %}

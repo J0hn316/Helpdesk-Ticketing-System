@@ -170,6 +170,9 @@ class TicketComment(models.Model):
         if not self.is_internal:
             return
 
+        if not self.author_id:
+            return
+
         allowed_roles = {
             self.author.Role.AGENT,
             self.author.Role.ADMIN,

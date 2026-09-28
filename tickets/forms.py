@@ -110,3 +110,36 @@ class TicketAssignmentForm(forms.ModelForm):
             )
 
         return assigned_agent
+
+
+class SupportCommentForm(forms.ModelForm):
+    class Meta:
+        model = TicketComment
+        fields = (
+            "body",
+            "is_internal",
+        )
+        labels = {
+            "body": "Support update",
+            "is_internal": "Internal note",
+        }
+        widgets = {
+            "body": forms.Textarea(
+                attrs={
+                    "rows": 5,
+                    "placeholder": (
+                        "Add a public reply or internal " "troubleshooting note."
+                    ),
+                }
+            ),
+        }
+
+    def clean_body(self) -> str:
+        body = self.cleaned_data["body"].strip()
+
+        if len(body) < 2:
+            raise forms.ValidationError(
+                "Enter a comment containing at least 2 characters."
+            )
+
+        return body

@@ -9,7 +9,12 @@ from django.http import (
 )
 
 from .models import Ticket, TicketComment
-from .forms import TicketCreateForm, RequesterCommentForm, TicketAssignmentForm
+from .forms import (
+    TicketCreateForm,
+    RequesterCommentForm,
+    TicketAssignmentForm,
+    SupportCommentForm,
+)
 
 
 @login_required
@@ -61,6 +66,7 @@ def agent_ticket_detail(
         "ticket": ticket,
         "comments": comments,
         "assignment_form": TicketAssignmentForm(instance=ticket),
+        "support_comment_form": SupportCommentForm(),
         "can_claim": (
             request.user.is_agent
             and ticket.assigned_agent is None
@@ -69,6 +75,7 @@ def agent_ticket_detail(
         "can_assign": (
             request.user.is_helpdesk_admin and ticket.status != Ticket.Status.CLOSED
         ),
+        "can_comment": ticket.status != Ticket.Status.CLOSED,
         "is_closed": ticket.status == Ticket.Status.CLOSED,
     }
 
@@ -77,6 +84,69 @@ def agent_ticket_detail(
         "tickets/agent_ticket_detail.html",
         context,
     )
+
+
+@login_required
+@require_POST
+def support_comment_create(request: HttpRequest, ticket_id: int) -> HttpResponse:
+    if not request.user.is_support_staff:
+        return HttpResponseForbidden("Only support staff can add support updates.")
+
+    ticket = get_object_or_404(Ticket, pk=ticket_id)
+
+    if ticket.status == Ticket.Status.CLOSED:
+        messages.error(
+            request,
+            "Closed tickets cannot receive new support updates.",
+        )
+
+        return redirect(
+            "tickets:agent-detail",
+            ticket_id=ticket.pk,
+        )
+
+    form = SupportCommentForm(request.POST)
+
+    if form.is_valid():
+        comment = form.save(commit=False)
+        comment.ticket = ticket
+        comment.author = request.user
+        comment.full_clean()
+        comment.save()
+
+        if comment.is_internal:
+            messages.success(
+                request,
+                "Internal note added successfully.",
+            )
+        else:
+            messages.success(
+                request,
+                "Public reply added successfully.",
+            )
+
+        return redirect("tickets:agent-detail", ticket_id=ticket.pk)
+
+    comments = ticket.comments.select_related("author").order_by("created_at")
+
+    context = {
+        "ticket": ticket,
+        "comments": comments,
+        "support_comment_form": form,
+        "assignment_form": TicketAssignmentForm(instance=ticket),
+        "can_claim": (
+            request.user.is_agent
+            and ticket.assigned_agent is None
+            and ticket.status != Ticket.Status.CLOSED
+        ),
+        "can_assign": (
+            request.user.is_helpdesk_admin and ticket.status != Ticket.Status.CLOSED
+        ),
+        "can_comment": True,
+        "is_closed": False,
+    }
+
+    return render(request, "tickets/agent_ticket_detail.html", context, status=400)
 
 
 @login_required
