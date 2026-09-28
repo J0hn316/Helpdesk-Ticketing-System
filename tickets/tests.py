@@ -11,6 +11,8 @@ from .forms import (
     RequesterCommentForm,
     TicketAssignmentForm,
     SupportCommentForm,
+    TicketPriorityForm,
+    TicketStatusForm,
 )
 
 User = get_user_model()
@@ -1451,6 +1453,660 @@ class TicketAssignViewTests(TestCase):
             self.ticket.assigned_agent,
             self.agent,
         )
+
+
+class TicketStatusTransitionTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="transitionrequester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.category = Category.objects.create(
+            name="Transition Testing",
+        )
+
+    def create_ticket(
+        self,
+        status: str = Ticket.Status.OPEN,
+    ) -> Ticket:
+        return Ticket.objects.create(
+            title="Status transition test ticket",
+            description=("This ticket is used to test status transitions."),
+            requester=self.requester,
+            category=self.category,
+            status=status,
+        )
+
+    def test_open_ticket_allowed_transitions(self) -> None:
+        ticket = self.create_ticket()
+
+        self.assertEqual(
+            ticket.get_allowed_status_transitions(),
+            (
+                Ticket.Status.IN_PROGRESS,
+                Ticket.Status.PENDING,
+            ),
+        )
+
+    def test_open_ticket_cannot_transition_directly_to_closed(
+        self,
+    ) -> None:
+        ticket = self.create_ticket()
+
+        with self.assertRaises(ValidationError):
+            ticket.transition_to(
+                Ticket.Status.CLOSED,
+            )
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.OPEN,
+        )
+
+    def test_transition_to_resolved_sets_resolved_at(
+        self,
+    ) -> None:
+        ticket = self.create_ticket(Ticket.Status.IN_PROGRESS)
+
+        ticket.transition_to(
+            Ticket.Status.RESOLVED,
+        )
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.RESOLVED,
+        )
+        self.assertIsNotNone(ticket.resolved_at)
+        self.assertIsNone(ticket.closed_at)
+
+    def test_resolved_to_in_progress_clears_resolved_at(
+        self,
+    ) -> None:
+        ticket = self.create_ticket(Ticket.Status.IN_PROGRESS)
+
+        ticket.transition_to(
+            Ticket.Status.RESOLVED,
+        )
+
+        self.assertIsNotNone(ticket.resolved_at)
+
+        ticket.transition_to(
+            Ticket.Status.IN_PROGRESS,
+        )
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.IN_PROGRESS,
+        )
+        self.assertIsNone(ticket.resolved_at)
+
+    def test_resolved_to_closed_sets_closed_at(self) -> None:
+        ticket = self.create_ticket(Ticket.Status.IN_PROGRESS)
+
+        ticket.transition_to(
+            Ticket.Status.RESOLVED,
+        )
+
+        resolved_at = ticket.resolved_at
+
+        ticket.transition_to(
+            Ticket.Status.CLOSED,
+        )
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.CLOSED,
+        )
+        self.assertEqual(
+            ticket.resolved_at,
+            resolved_at,
+        )
+        self.assertIsNotNone(ticket.closed_at)
+
+    def test_closed_ticket_has_no_allowed_transitions(
+        self,
+    ) -> None:
+        ticket = self.create_ticket(Ticket.Status.CLOSED)
+
+        self.assertEqual(
+            ticket.get_allowed_status_transitions(),
+            (),
+        )
+
+
+class TicketStatusFormTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="statusrequester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.category = Category.objects.create(
+            name="Status Forms",
+        )
+        cls.ticket = Ticket.objects.create(
+            title="Status form ticket",
+            description=("This ticket tests the status update form."),
+            requester=cls.requester,
+            category=cls.category,
+        )
+
+    def test_open_ticket_form_contains_allowed_statuses(
+        self,
+    ) -> None:
+        form = TicketStatusForm(
+            ticket=self.ticket,
+        )
+
+        choices = [value for value, _label in form.fields["status"].choices]
+
+        self.assertIn(
+            Ticket.Status.IN_PROGRESS,
+            choices,
+        )
+        self.assertIn(
+            Ticket.Status.PENDING,
+            choices,
+        )
+
+    def test_open_ticket_form_excludes_closed(self) -> None:
+        form = TicketStatusForm(
+            ticket=self.ticket,
+        )
+
+        choices = [value for value, _label in form.fields["status"].choices]
+
+        self.assertNotIn(
+            Ticket.Status.CLOSED,
+            choices,
+        )
+
+    def test_allowed_transition_is_valid(self) -> None:
+        form = TicketStatusForm(
+            data={
+                "status": Ticket.Status.IN_PROGRESS,
+            },
+            ticket=self.ticket,
+        )
+
+        self.assertTrue(form.is_valid())
+
+    def test_disallowed_transition_is_invalid(self) -> None:
+        form = TicketStatusForm(
+            data={
+                "status": Ticket.Status.CLOSED,
+            },
+            ticket=self.ticket,
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("status", form.errors)
+
+
+class TicketPriorityFormTests(TestCase):
+    def test_form_contains_only_priority(self) -> None:
+        form = TicketPriorityForm()
+
+        self.assertEqual(
+            list(form.fields),
+            ["priority"],
+        )
+
+    def test_valid_priority_is_accepted(self) -> None:
+        form = TicketPriorityForm(
+            data={
+                "priority": Ticket.Priority.CRITICAL,
+            }
+        )
+
+        self.assertTrue(form.is_valid())
+
+    def test_invalid_priority_is_rejected(self) -> None:
+        form = TicketPriorityForm(
+            data={
+                "priority": "SUPER_URGENT",
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("priority", form.errors)
+
+
+class TicketStatusUpdateViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="requester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="agent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="helpdeskadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Status Updates",
+        )
+
+    def create_ticket(
+        self,
+        status: str = Ticket.Status.OPEN,
+    ) -> Ticket:
+        return Ticket.objects.create(
+            title="Status update ticket",
+            description=("This ticket tests status updates."),
+            requester=self.requester,
+            category=self.category,
+            status=status,
+        )
+
+    def status_url(self, ticket: Ticket) -> str:
+        return reverse(
+            "tickets:status-update",
+            kwargs={"ticket_id": ticket.pk},
+        )
+
+    def test_status_update_requires_authentication(self) -> None:
+        ticket = self.create_ticket()
+
+        response = self.client.post(
+            self.status_url(ticket),
+            {
+                "status": Ticket.Status.IN_PROGRESS,
+            },
+        )
+
+        expected_url = f"{reverse('accounts:login')}" f"?next={self.status_url(ticket)}"
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_status_update_does_not_accept_get(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.status_url(ticket),
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_requester_cannot_update_status(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.status_url(ticket),
+            {
+                "status": Ticket.Status.IN_PROGRESS,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_agent_can_update_status(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.status_url(ticket),
+            {
+                "status": Ticket.Status.IN_PROGRESS,
+            },
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.IN_PROGRESS,
+        )
+
+        self.assertRedirects(
+            response,
+            reverse(
+                "tickets:agent-detail",
+                kwargs={"ticket_id": ticket.pk},
+            ),
+        )
+
+    def test_helpdesk_admin_can_update_status(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.helpdesk_admin)
+
+        self.client.post(
+            self.status_url(ticket),
+            {
+                "status": Ticket.Status.PENDING,
+            },
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.PENDING,
+        )
+
+    def test_invalid_transition_is_rejected(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.status_url(ticket),
+            {
+                "status": Ticket.Status.CLOSED,
+            },
+            follow=True,
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.OPEN,
+        )
+        self.assertContains(
+            response,
+            "Ticket status could not be updated.",
+        )
+
+    def test_resolving_ticket_sets_resolved_at(self) -> None:
+        ticket = self.create_ticket(Ticket.Status.IN_PROGRESS)
+        self.client.force_login(self.agent)
+
+        self.client.post(
+            self.status_url(ticket),
+            {
+                "status": Ticket.Status.RESOLVED,
+            },
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.RESOLVED,
+        )
+        self.assertIsNotNone(ticket.resolved_at)
+
+    def test_closing_resolved_ticket_sets_closed_at(
+        self,
+    ) -> None:
+        ticket = self.create_ticket(Ticket.Status.IN_PROGRESS)
+        ticket.transition_to(Ticket.Status.RESOLVED)
+        ticket.save()
+
+        self.client.force_login(self.agent)
+
+        self.client.post(
+            self.status_url(ticket),
+            {
+                "status": Ticket.Status.CLOSED,
+            },
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.CLOSED,
+        )
+        self.assertIsNotNone(ticket.closed_at)
+
+    def test_closed_ticket_cannot_change_status(self) -> None:
+        ticket = self.create_ticket(Ticket.Status.CLOSED)
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.status_url(ticket),
+            {
+                "status": Ticket.Status.IN_PROGRESS,
+            },
+            follow=True,
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.CLOSED,
+        )
+        self.assertContains(
+            response,
+            "Closed tickets cannot change status.",
+        )
+
+    def test_nonexistent_ticket_returns_404(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            reverse(
+                "tickets:status-update",
+                kwargs={"ticket_id": 999999},
+            ),
+            {
+                "status": Ticket.Status.IN_PROGRESS,
+            },
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+
+class TicketPriorityUpdateViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.requester = User.objects.create_user(
+            username="priorityrequester",
+            password="testpass123",
+            role=User.Role.REQUESTER,
+        )
+        cls.agent = User.objects.create_user(
+            username="priorityagent",
+            password="testpass123",
+            role=User.Role.AGENT,
+        )
+        cls.helpdesk_admin = User.objects.create_user(
+            username="priorityadmin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+        )
+        cls.category = Category.objects.create(
+            name="Priority Updates",
+        )
+
+    def create_ticket(
+        self,
+        status: str = Ticket.Status.OPEN,
+    ) -> Ticket:
+        return Ticket.objects.create(
+            title="Priority update ticket",
+            description=("This ticket tests priority updates."),
+            requester=self.requester,
+            category=self.category,
+            status=status,
+        )
+
+    def priority_url(self, ticket: Ticket) -> str:
+        return reverse(
+            "tickets:priority-update",
+            kwargs={"ticket_id": ticket.pk},
+        )
+
+    def test_priority_update_requires_authentication(
+        self,
+    ) -> None:
+        ticket = self.create_ticket()
+
+        response = self.client.post(
+            self.priority_url(ticket),
+            {
+                "priority": Ticket.Priority.HIGH,
+            },
+        )
+
+        expected_url = (
+            f"{reverse('accounts:login')}" f"?next={self.priority_url(ticket)}"
+        )
+
+        self.assertRedirects(
+            response,
+            expected_url,
+        )
+
+    def test_priority_update_does_not_accept_get(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.priority_url(ticket),
+        )
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_requester_cannot_update_priority(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.requester)
+
+        response = self.client.post(
+            self.priority_url(ticket),
+            {
+                "priority": Ticket.Priority.HIGH,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_agent_can_update_priority(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.agent)
+
+        self.client.post(
+            self.priority_url(ticket),
+            {
+                "priority": Ticket.Priority.HIGH,
+            },
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.priority,
+            Ticket.Priority.HIGH,
+        )
+
+    def test_helpdesk_admin_can_update_priority(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.helpdesk_admin)
+
+        self.client.post(
+            self.priority_url(ticket),
+            {
+                "priority": Ticket.Priority.CRITICAL,
+            },
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.priority,
+            Ticket.Priority.CRITICAL,
+        )
+
+    def test_invalid_priority_is_rejected(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.priority_url(ticket),
+            {
+                "priority": "SUPER_URGENT",
+            },
+            follow=True,
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.priority,
+            Ticket.Priority.MEDIUM,
+        )
+        self.assertContains(
+            response,
+            "Ticket priority could not be updated.",
+        )
+
+    def test_closed_ticket_cannot_change_priority(self) -> None:
+        ticket = self.create_ticket(Ticket.Status.CLOSED)
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            self.priority_url(ticket),
+            {
+                "priority": Ticket.Priority.CRITICAL,
+            },
+            follow=True,
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.priority,
+            Ticket.Priority.MEDIUM,
+        )
+        self.assertContains(
+            response,
+            "Closed tickets cannot change priority.",
+        )
+
+    def test_status_field_in_post_is_ignored(self) -> None:
+        ticket = self.create_ticket()
+        self.client.force_login(self.agent)
+
+        self.client.post(
+            self.priority_url(ticket),
+            {
+                "priority": Ticket.Priority.HIGH,
+                "status": Ticket.Status.CLOSED,
+            },
+        )
+
+        ticket.refresh_from_db()
+
+        self.assertEqual(
+            ticket.priority,
+            Ticket.Priority.HIGH,
+        )
+        self.assertEqual(
+            ticket.status,
+            Ticket.Status.OPEN,
+        )
+
+    def test_nonexistent_ticket_returns_404(self) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.post(
+            reverse(
+                "tickets:priority-update",
+                kwargs={"ticket_id": 999999},
+            ),
+            {
+                "priority": Ticket.Priority.HIGH,
+            },
+        )
+
+        self.assertEqual(response.status_code, 404)
 
 
 class RequesterTicketListViewTests(TestCase):
@@ -2978,6 +3634,54 @@ class AgentTicketDetailViewTests(TestCase):
                 "tickets:support-comment-create",
                 kwargs={"ticket_id": self.closed_ticket.pk},
             ),
+        )
+
+    def test_open_ticket_displays_status_and_priority_forms(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(),
+        )
+
+        self.assertIsInstance(
+            response.context["status_form"],
+            TicketStatusForm,
+        )
+        self.assertIsInstance(
+            response.context["priority_form"],
+            TicketPriorityForm,
+        )
+        self.assertContains(
+            response,
+            "Update status",
+        )
+        self.assertContains(
+            response,
+            "Update priority",
+        )
+
+    def test_closed_ticket_hides_status_and_priority_forms(
+        self,
+    ) -> None:
+        self.client.force_login(self.agent)
+
+        response = self.client.get(
+            self.detail_url(self.closed_ticket),
+        )
+
+        self.assertContains(
+            response,
+            "Closed tickets cannot be modified.",
+        )
+        self.assertNotContains(
+            response,
+            "Update status",
+        )
+        self.assertNotContains(
+            response,
+            "Update priority",
         )
 
 

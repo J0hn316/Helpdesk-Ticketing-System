@@ -14,6 +14,8 @@ from .forms import (
     RequesterCommentForm,
     TicketAssignmentForm,
     SupportCommentForm,
+    TicketStatusForm,
+    TicketPriorityForm,
 )
 
 
@@ -67,6 +69,12 @@ def agent_ticket_detail(
         "comments": comments,
         "assignment_form": TicketAssignmentForm(instance=ticket),
         "support_comment_form": SupportCommentForm(),
+        "status_form": TicketStatusForm(ticket=ticket),
+        "priority_form": TicketPriorityForm(
+            initial={
+                "priority": ticket.priority,
+            }
+        ),
         "can_claim": (
             request.user.is_agent
             and ticket.assigned_agent is None
@@ -76,6 +84,7 @@ def agent_ticket_detail(
             request.user.is_helpdesk_admin and ticket.status != Ticket.Status.CLOSED
         ),
         "can_comment": ticket.status != Ticket.Status.CLOSED,
+        "can_update_ticket": ticket.status != Ticket.Status.CLOSED,
         "is_closed": ticket.status == Ticket.Status.CLOSED,
     }
 
@@ -134,6 +143,12 @@ def support_comment_create(request: HttpRequest, ticket_id: int) -> HttpResponse
         "comments": comments,
         "support_comment_form": form,
         "assignment_form": TicketAssignmentForm(instance=ticket),
+        "status_form": TicketStatusForm(ticket=ticket),
+        "priority_form": TicketPriorityForm(
+            initial={
+                "priority": ticket.priority,
+            }
+        ),
         "can_claim": (
             request.user.is_agent
             and ticket.assigned_agent is None
@@ -143,6 +158,7 @@ def support_comment_create(request: HttpRequest, ticket_id: int) -> HttpResponse
             request.user.is_helpdesk_admin and ticket.status != Ticket.Status.CLOSED
         ),
         "can_comment": True,
+        "can_update_ticket": True,
         "is_closed": False,
     }
 
@@ -296,6 +312,123 @@ def ticket_list(request: HttpRequest) -> HttpResponse:
         request,
         "tickets/ticket_list.html",
         context,
+    )
+
+
+@login_required
+@require_POST
+def ticket_status_update(
+    request: HttpRequest,
+    ticket_id: int,
+) -> HttpResponse:
+    if not request.user.is_support_staff:
+        return HttpResponseForbidden("Only support staff can update ticket status.")
+
+    ticket = get_object_or_404(
+        Ticket,
+        pk=ticket_id,
+    )
+
+    if ticket.status == Ticket.Status.CLOSED:
+        messages.error(
+            request,
+            "Closed tickets cannot change status.",
+        )
+
+        return redirect(
+            "tickets:agent-detail",
+            ticket_id=ticket.pk,
+        )
+
+    form = TicketStatusForm(
+        request.POST,
+        ticket=ticket,
+    )
+
+    if form.is_valid():
+        old_status = ticket.get_status_display()
+
+        ticket.transition_to(form.cleaned_data["status"])
+
+        ticket.full_clean()
+        ticket.save()
+
+        messages.success(
+            request,
+            (
+                f"Ticket status changed from "
+                f"{old_status} to "
+                f"{ticket.get_status_display()}."
+            ),
+        )
+
+        return redirect(
+            "tickets:agent-detail",
+            ticket_id=ticket.pk,
+        )
+
+    messages.error(
+        request,
+        "Ticket status could not be updated.",
+    )
+
+    return redirect(
+        "tickets:agent-detail",
+        ticket_id=ticket.pk,
+    )
+
+
+@login_required
+@require_POST
+def ticket_priority_update(
+    request: HttpRequest,
+    ticket_id: int,
+) -> HttpResponse:
+    if not request.user.is_support_staff:
+        return HttpResponseForbidden("Only support staff can update ticket priority.")
+
+    ticket = get_object_or_404(
+        Ticket,
+        pk=ticket_id,
+    )
+
+    if ticket.status == Ticket.Status.CLOSED:
+        messages.error(
+            request,
+            "Closed tickets cannot change priority.",
+        )
+
+        return redirect(
+            "tickets:agent-detail",
+            ticket_id=ticket.pk,
+        )
+
+    form = TicketPriorityForm(request.POST)
+
+    if form.is_valid():
+        ticket.priority = form.cleaned_data["priority"]
+
+        ticket.full_clean()
+        ticket.save()
+
+        messages.success(
+            request,
+            (f"Ticket priority changed to " f"{ticket.get_priority_display()}."),
+        )
+
+        return redirect(
+            "tickets:agent-detail",
+            ticket_id=ticket.pk,
+        )
+
+    messages.error(
+        request,
+        "Ticket priority could not be updated.",
+    )
+
+    return redirect(
+        "tickets:agent-detail",
+        ticket_id=ticket.pk,
     )
 
 

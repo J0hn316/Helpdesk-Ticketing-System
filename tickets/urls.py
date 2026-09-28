@@ -6,6 +6,8 @@ from .views import (
     ticket_assign,
     ticket_create,
     ticket_detail,
+    ticket_priority_update,
+    ticket_status_update,
     agent_ticket_queue,
     agent_ticket_detail,
     support_comment_create,
@@ -40,6 +42,16 @@ urlpatterns = [
         "queue/<int:ticket_id>/comments/",
         support_comment_create,
         name="support-comment-create",
+    ),
+    path(
+        "queue/<int:ticket_id>/status/",
+        ticket_status_update,
+        name="status-update",
+    ),
+    path(
+        "queue/<int:ticket_id>/priority/",
+        ticket_priority_update,
+        name="priority-update",
     ),
     path(
         "queue/<int:ticket_id>/claim/",

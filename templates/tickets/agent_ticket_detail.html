@@ -113,6 +113,37 @@ Queue {% endblock %} {% block content %}
                 <p>Closed tickets cannot be reassigned.</p>
               {% endif %}
             </section>
+            <section aria-labelledby="ticket-management-heading">
+              <h2 id="ticket-management-heading">Ticket management</h2>
+              {% if can_update_ticket %}
+                <div>
+                  <h3>Status</h3>
+                  <p>
+                    Current status:
+                    <strong>{{ ticket.get_status_display }}</strong>
+                  </p>
+                  <form method="post" action="{% url 'tickets:status-update' ticket.pk %}">
+                    {% csrf_token %}
+                    {{ status_form.as_p }}
+                    <button type="submit">Update status</button>
+                  </form>
+                </div>
+                <div>
+                  <h3>Priority</h3>
+                  <p>
+                    Current priority:
+                    <strong>{{ ticket.get_priority_display }}</strong>
+                  </p>
+                  <form method="post" action="{% url 'tickets:priority-update' ticket.pk %}">
+                    {% csrf_token %}
+                    {{ priority_form.as_p }}
+                    <button type="submit">Update priority</button>
+                  </form>
+                </div>
+              {% else %}
+                <p>Closed tickets cannot be modified.</p>
+              {% endif %}
+            </section>
             <section aria-labelledby="agent-description-heading">
               <h2 id="agent-description-heading">Description</h2>
               <p>{{ ticket.description|linebreaksbr }}</p>

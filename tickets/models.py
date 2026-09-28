@@ -2,6 +2,7 @@ import uuid
 
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 from django.core.exceptions import ValidationError
 
 
@@ -128,6 +129,75 @@ class Ticket(models.Model):
                     )
                 }
             )
+
+    def get_allowed_status_transitions(self) -> tuple[str, ...]:
+        transitions = {
+            self.Status.OPEN: (
+                self.Status.IN_PROGRESS,
+                self.Status.PENDING,
+            ),
+            self.Status.IN_PROGRESS: (
+                self.Status.PENDING,
+                self.Status.RESOLVED,
+            ),
+            self.Status.PENDING: (
+                self.Status.IN_PROGRESS,
+                self.Status.RESOLVED,
+            ),
+            self.Status.RESOLVED: (
+                self.Status.IN_PROGRESS,
+                self.Status.CLOSED,
+            ),
+            self.Status.CLOSED: (),
+        }
+
+        return transitions.get(self.status, ())
+
+    def can_transition_to(self, new_status: str) -> bool:
+        return new_status in self.get_allowed_status_transitions()
+
+    def transition_to(self, new_status: str) -> None:
+        if not self.can_transition_to(new_status):
+            status_labels = dict(self.Status.choices)
+
+            current_label = status_labels.get(
+                self.status,
+                self.status,
+            )
+            new_label = status_labels.get(
+                new_status,
+                new_status,
+            )
+
+            raise ValidationError(
+                {
+                    "status": (
+                        f"Cannot change ticket status from "
+                        f"{current_label} to {new_label}"
+                    )
+                }
+            )
+
+        now = timezone.now()
+
+        if new_status == self.Status.RESOLVED:
+            self.resolved_at = now
+            self.closed_at = None
+
+        elif (
+            self.status == self.Status.RESOLVED
+            and new_status == self.Status.IN_PROGRESS
+        ):
+            self.resolved_at = None
+            self.closed_at = None
+
+        elif new_status == self.Status.CLOSED:
+            if self.resolved_at is None:
+                self.resolved_at = now
+
+            self.closed_at = now
+
+        self.status = new_status
 
 
 class TicketComment(models.Model):

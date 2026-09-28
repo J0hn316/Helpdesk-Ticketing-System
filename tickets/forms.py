@@ -1,4 +1,5 @@
 from django import forms
+from typing import Any
 from django.contrib.auth import get_user_model
 
 from accounts.models import User
@@ -143,3 +144,48 @@ class SupportCommentForm(forms.ModelForm):
             )
 
         return body
+
+
+class TicketStatusForm(forms.Form):
+    status = forms.ChoiceField(
+        label="Change status",
+        choices=(),
+    )
+
+    def __init__(
+        self,
+        *args: Any,
+        ticket: Ticket,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.ticket = ticket
+
+        allowed_statuses = ticket.get_allowed_status_transitions()
+
+        self.fields["status"].choices = [
+            ("", "Select new status"),
+            *[
+                (
+                    status,
+                    Ticket.Status(status).label,
+                )
+                for status in allowed_statuses
+            ],
+        ]
+
+    def clean_status(self) -> str:
+        status = self.cleaned_data["status"]
+
+        if not self.ticket.can_transition_to(status):
+            raise forms.ValidationError("That status transition is not allowed.")
+
+        return status
+
+
+class TicketPriorityForm(forms.Form):
+    priority = forms.ChoiceField(
+        label="Priority",
+        choices=Ticket.Priority.choices,
+    )
