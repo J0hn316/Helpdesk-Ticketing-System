@@ -90,9 +90,12 @@ Queue {% endblock %} {% block content %}
               <h2 id="assignment-heading">Assignment</h2>
               {% if ticket.assigned_agent %}
                 <p>
-                  Currently assigned to {% if ticket.assigned_agent.get_full_name %} {{
-                    ticket.assigned_agent.get_full_name }}. {% else %} {{
-                      ticket.assigned_agent.username }}. {% endif %}
+                  Currently assigned to
+                  {% if ticket.assigned_agent.get_full_name %}
+                    {{ ticket.assigned_agent.get_full_name }}.
+                  {% else %}
+                    {{ ticket.assigned_agent.username }}.
+                  {% endif %}
                 </p>
               {% else %}
                 <p>This ticket is currently unassigned.</p>
