@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.db import transaction
 from django.views.decorators.http import require_POST
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render, get_object_or_404
@@ -7,8 +8,8 @@ from django.http import (
     HttpResponse,
     HttpResponseForbidden,
 )
-
-from .models import Ticket, TicketComment
+from .services import create_ticket_history
+from .models import Ticket, TicketComment, TicketHistory
 from .forms import (
     TicketCreateForm,
     RequesterCommentForm,
@@ -227,9 +228,18 @@ def ticket_claim(request: HttpRequest, ticket_id: int) -> HttpResponse:
 
         return redirect("tickets:agent-detail", ticket_id=ticket.pk)
 
-    ticket.assigned_agent = request.user
-    ticket.full_clean()
-    ticket.save()
+    with transaction.atomic():
+        ticket.assigned_agent = request.user
+        ticket.full_clean()
+        ticket.save()
+
+        create_ticket_history(
+            ticket=ticket,
+            actor=request.user,
+            action=TicketHistory.Action.CLAIMED,
+            old_value="Unassigned",
+            new_value=request.user.username,
+        )
 
     messages.success(request, f"Ticket {ticket.ticket_number} was assigned to you.")
 
@@ -264,17 +274,32 @@ def ticket_assign(request: HttpRequest, ticket_id: int) -> HttpResponse:
     )
 
     if form.is_valid():
-        ticket = form.save(commit=False)
-        ticket.full_clean()
-        ticket.save()
+        old_agent = ticket.assigned_agent
 
-        messages.success(
-            request,
-            (
-                f"Ticket {ticket.ticket_number} was assigned "
-                f"to {ticket.assigned_agent}."
-            ),
+        updated_ticket = form.save(commit=False)
+
+        old_value = old_agent.username if old_agent else "Unassigned"
+
+        new_value = (
+            updated_ticket.assigned_agent.username
+            if updated_ticket.assigned_agent
+            else "Unassigned"
         )
+
+        with transaction.atomic():
+            updated_ticket.full_clean()
+            updated_ticket.save()
+
+            if old_agent != updated_ticket.assigned_agent:
+                create_ticket_history(
+                    ticket=updated_ticket,
+                    actor=request.user,
+                    action=TicketHistory.Action.ASSIGNED,
+                    old_value=old_value,
+                    new_value=new_value,
+                )
+
+        messages.success(request, "Ticket assignment updated successfully.")
 
         return redirect(
             "tickets:agent-detail",
@@ -348,24 +373,33 @@ def ticket_status_update(
     if form.is_valid():
         old_status = ticket.get_status_display()
 
+    with transaction.atomic():
         ticket.transition_to(form.cleaned_data["status"])
 
         ticket.full_clean()
         ticket.save()
 
-        messages.success(
-            request,
-            (
-                f"Ticket status changed from "
-                f"{old_status} to "
-                f"{ticket.get_status_display()}."
-            ),
+        create_ticket_history(
+            ticket=ticket,
+            actor=request.user,
+            action=TicketHistory.Action.STATUS_CHANGED,
+            old_value=old_status,
+            new_value=ticket.get_status_display(),
         )
 
-        return redirect(
-            "tickets:agent-detail",
-            ticket_id=ticket.pk,
-        )
+    messages.success(
+        request,
+        (
+            f"Ticket status changed from "
+            f"{old_status} to "
+            f"{ticket.get_status_display()}."
+        ),
+    )
+
+    return redirect(
+        "tickets:agent-detail",
+        ticket_id=ticket.pk,
+    )
 
     messages.error(
         request,
@@ -406,20 +440,41 @@ def ticket_priority_update(
     form = TicketPriorityForm(request.POST)
 
     if form.is_valid():
-        ticket.priority = form.cleaned_data["priority"]
+        old_priority = ticket.get_priority_display()
 
-        ticket.full_clean()
-        ticket.save()
+        new_priority = form.cleaned_data["priority"]
 
-        messages.success(
-            request,
-            (f"Ticket priority changed to " f"{ticket.get_priority_display()}."),
-        )
+        if ticket.priority == new_priority:
+            messages.info(
+                request,
+                "Ticket priority is already set to that value.",
+            )
 
-        return redirect(
-            "tickets:agent-detail",
-            ticket_id=ticket.pk,
-        )
+            return redirect("ticket:agent-detail", ticket_id=ticket.pk)
+
+        with transaction.atomic():
+            ticket.priority = new_priority
+
+            ticket.full_clean()
+            ticket.save()
+
+            create_ticket_history(
+                ticket=ticket,
+                actor=request.user,
+                action=TicketHistory.Action.PRIORITY_CHANGED,
+                old_value=old_priority,
+                new_value=ticket.get_priority_display(),
+            )
+
+            messages.success(
+                request,
+                (f"Ticket priority changed to " f"{ticket.get_priority_display()}."),
+            )
+
+            return redirect(
+                "tickets:agent-detail",
+                ticket_id=ticket.pk,
+            )
 
     messages.error(
         request,

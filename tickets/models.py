@@ -257,3 +257,49 @@ class TicketComment(models.Model):
                     )
                 }
             )
+
+
+class TicketHistory(models.Model):
+    class Action(models.TextChoices):
+        CLAIMED = "CLAIMED", "Claimed"
+        ASSIGNED = "ASSIGNED", "Assigned"
+        STATUS_CHANGED = "STATUS_CHANGED", "Status changed"
+        PRIORITY_CHANGED = "PRIORITY_CHANGED", "Priority changed"
+
+    ticket = models.ForeignKey(
+        Ticket,
+        on_delete=models.CASCADE,
+        related_name="history",
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="ticket_history_events",
+        null=True,
+        blank=True,
+    )
+    action = models.CharField(
+        max_length=30,
+        choices=Action.choices,
+    )
+    old_value = models.CharField(
+        max_length=255,
+        blank=True,
+    )
+    new_value = models.CharField(
+        max_length=255,
+        blank=True,
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        ordering = [
+            "-created_at",
+            "-pk",
+        ]
+        verbose_name_plural = "ticket history"
+
+    def __str__(self) -> str:
+        return f"{self.ticket.ticket_number} - " f"{self.get_action_display()}"

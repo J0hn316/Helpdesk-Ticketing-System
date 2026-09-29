@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Category, Ticket, TicketComment
+from .models import Category, Ticket, TicketComment, TicketHistory
 
 
 @admin.register(Category)
@@ -121,3 +121,58 @@ class TicketCommentAdmin(admin.ModelAdmin):
             return "Internal note"
 
         return "Public comment"
+
+
+@admin.register(TicketHistory)
+class TicketHistoryAdmin(admin.ModelAdmin):
+    list_display = (
+        "ticket",
+        "action",
+        "actor",
+        "old_value",
+        "new_value",
+        "created_at",
+    )
+    list_filter = (
+        "action",
+        "created_at",
+    )
+    search_fields = (
+        "ticket__ticket_number",
+        "actor__username",
+        "old_value",
+        "new_value",
+    )
+    readonly_fields = (
+        "ticket",
+        "actor",
+        "action",
+        "old_value",
+        "new_value",
+        "created_at",
+    )
+    date_hierarchy = "created_at"
+    ordering = (
+        "-created_at",
+        "-pk",
+    )
+
+    def has_add_permission(
+        self,
+        request,
+    ) -> bool:
+        return False
+
+    def has_change_permission(
+        self,
+        request,
+        obj=None,
+    ) -> bool:
+        return False
+
+    def has_delete_permission(
+        self,
+        request,
+        obj=None,
+    ) -> bool:
+        return False
